@@ -1,4 +1,4 @@
--- Matches EW_SHEET_RULES.yaml → postgres.table / columns
+-- Matches function/sheet_sync/rules/EW_SHEET_RULES.yaml → postgres.table / columns
 
 CREATE TABLE IF NOT EXISTS ltl_working_quotes (
     ew_quote_no TEXT PRIMARY KEY,

@@ -1,0 +1,37 @@
+# =============================================================================
+# EW_CATALOG.yaml — EWproject 总目录（给人 / AI 查：哪个「逻辑名」对应哪张表、哪个 tab）
+# =============================================================================
+# 约定：
+#   - sheets.<id> 为稳定英文 id（代码、--sheet 参数用）
+#   - routes：对话里可用「路径」形式，例如 /F/read/order
+#   - aliases_zh / aliases_en：自然语言别名（例如「下单 BOL need booking」）
+#   - google：与浏览器 URL 一致；worksheet_id 即链接里 gid=
+#   - rules_file：相对仓库根目录，指向 function/sheet_sync/rules 下的列映射规则
+#
+# 读取示例（在仓库根目录）：
+#   python -m function.sheet_sync --sheet ew_quote_working
+#   python -m function.sheet_sync --sheet "/F/read/order"
+#   python -m function.sheet_sync --probe --sheet ew_quote_working
+# =============================================================================
+
+catalog_version: 1
+
+sheets:
+  ew_quote_working:
+    id: ew_quote_working
+    note: "LTL 内部报价 working 总表 — 主数据 tab（列规则见 rules 文件）"
+    routes:
+      - "/F/read/order"
+      - "/F/read/order ewsheet"
+    aliases_zh:
+      - "下单 BOL need booking"
+      - "LTL内部报价 ew working 总表"
+    aliases_en:
+      - "order ewsheet"
+      - "ew sheet working"
+    google:
+      spreadsheet_id: "1cuPIPfP7WYpBI33UVovFAI7wzH8lAOp3PqGOp8idZfU"
+      worksheet_id: 589486198
+      url: "https://docs.google.com/spreadsheets/d/1cuPIPfP7WYpBI33UVovFAI7wzH8lAOp3PqGOp8idZfU/edit?gid=589486198#gid=589486198"
+      tab_title_hint: "1-25 LTL内部报价-ew  working 总表"
+    rules_file: "function/sheet_sync/rules/EW_SHEET_RULES.yaml"

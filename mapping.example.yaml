@@ -1,4 +1,5 @@
-# Copy to mapping.yaml and edit. Table must exist in Postgres with matching columns.
+# Copy to mapping.yaml and edit. Prefer registering sheets in EW_CATALOG.yaml + rules under
+# function/sheet_sync/rules/ — see DIRECTORY.md.
 # Share the Google Sheet with the service account email inside your JSON (client_email).
 
 version: 1

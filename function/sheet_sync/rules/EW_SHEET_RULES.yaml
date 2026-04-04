@@ -6,8 +6,9 @@
 #   - 省略 letter 且 keys 为第 1 行「单元格原文」→ 按表头文字匹配（旧方式）
 # 行范围：layout.header_row / data_start_row（1-based）
 #
-# 验证列字母是否对应正确：python -m sheet_sync --probe --spreadsheet-id … --worksheet-id …
-# 按规则读取 JSON：python -m sheet_sync
+# 验证列字母：python -m function.sheet_sync --probe --sheet ew_quote_working
+# 按规则读取 JSON：python -m function.sheet_sync --sheet ew_quote_working
+# 逻辑名 / URL 映射见仓库根目录 EW_CATALOG.yaml
 # =============================================================================
 
 ew_sheet_rules_version: 1
