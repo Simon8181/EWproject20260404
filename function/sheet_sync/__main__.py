@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import logging
 import os
@@ -11,18 +12,14 @@ from dotenv import load_dotenv
 
 from .catalog import get_google_for_sheet, project_root, resolve_rules_for_sheet
 from .config import load_mapping
-from .sync import (
-    _open_sheet_client,
-    fetch_worksheet_rows,
-    normalize_row_strings,
-    probe_sheet,
-    row_passes_filters,
-    run_sync,
-)
+from .render_html import html_document as _html_document
+from .render_html import html_table as _html_table
+from .rows import read_mapped_rows, read_mapped_sections
+from .sync import probe_sheet, run_sync
 
 
 def _default_rules_path() -> Path:
-    return project_root() / "function" / "sheet_sync" / "rules" / "EW_SHEET_RULES.yaml"
+    return project_root() / "function" / "sheet_sync" / "rules" / "EW_ORDER_RULES.yaml"
 
 
 def main() -> None:
@@ -39,7 +36,7 @@ def main() -> None:
         "--mapping",
         type=Path,
         default=None,
-        help="Path to rules YAML (default: function/sheet_sync/rules/EW_SHEET_RULES.yaml)",
+        help="Path to rules YAML (default: function/sheet_sync/rules/EW_ORDER_RULES.yaml)",
     )
     parser.add_argument(
         "--sheet",
@@ -82,6 +79,12 @@ def main() -> None:
         "--read",
         action="store_true",
         help="Print all matching rows as JSON (default; no DB)",
+    )
+    parser.add_argument(
+        "--format",
+        choices=("json", "html"),
+        default="json",
+        help="Output format: json (default) or html table page to stdout",
     )
     parser.add_argument(
         "--sync",
@@ -142,32 +145,22 @@ def main() -> None:
     cfg = load_mapping(mapping_path)
     os.environ.setdefault("MAPPING_FILE", str(cfg.mapping_path))
 
-    def _rows_json(limit: int | None) -> None:
-        gc = _open_sheet_client()
-        for job in cfg.jobs:
-            _, rows = fetch_worksheet_rows(gc, cfg.spreadsheet_id, job)
-            filtered: list[dict[str, str]] = []
-            for r in rows:
-                nr = normalize_row_strings(r, job.reading)
-                if not row_passes_filters(nr, job.reading, job):
-                    continue
-                if job.column_map_mode == "letter":
-                    filtered.append(
-                        {pg: nr.get(pg, "") for pg in job.columns.values()}
-                    )
-                else:
-                    filtered.append(
-                        {
-                            pg: nr.get(src_key, "")
-                            for src_key, pg in job.columns.items()
-                        }
-                    )
-                if limit is not None and len(filtered) >= limit:
-                    break
+    def _emit_rows(limit: int | None) -> None:
+        fmt = args.format
+        if fmt == "json":
+            filtered = read_mapped_rows(cfg, limit)
             print(json.dumps(filtered, ensure_ascii=False, indent=2))
+            return
+        html_sections: list[str] = []
+        for label, rows in read_mapped_sections(cfg, limit):
+            block = _html_table(rows)
+            if len(cfg.jobs) > 1:
+                block = f"<h2>{html.escape(label)}</h2>" + block
+            html_sections.append(block)
+        print(_html_document(html_sections))
 
     if args.preview is not None:
-        _rows_json(args.preview)
+        _emit_rows(args.preview)
         return
 
     if args.sync:
@@ -176,7 +169,7 @@ def main() -> None:
             print(f"{k}: {v} rows affected")
         return
 
-    _rows_json(None)
+    _emit_rows(None)
 
 
 if __name__ == "__main__":

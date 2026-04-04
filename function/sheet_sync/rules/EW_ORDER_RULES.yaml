@@ -1,5 +1,5 @@
 # =============================================================================
-# EW_SHEET_RULES.yaml — Sheet 读取规则（本仓库替代 SheetSQL 的约定）
+# EW_ORDER_RULES.yaml —「下单 BOL need booking」tab 读取规则（原 EW_SHEET_RULES）
 # =============================================================================
 # 映射方式（二选一）：
 #   - mapping.column_mode: letter  → 用 Excel 列字母 A、B、C、AA…（与表头文字无关）
@@ -11,7 +11,7 @@
 # 逻辑名 / URL 映射见仓库根目录 EW_CATALOG.yaml
 # =============================================================================
 
-ew_sheet_rules_version: 1
+ew_order_rules_version: 1
 
 mapping:
   column_mode: letter
@@ -40,17 +40,27 @@ postgres:
   primary_key:
     - ew_quote_no
 
-# 列字母 → 数据库列名（按你表实际列位调整；与 Google 第 1 行标题文字无关）
+# A 列：看单元格填充色（不是文字）。红→待找车，绿→已经安排；同步时写入 a_cell_status
+color_columns:
+  A: a_cell_status
+
+# 列字母 → 字段名（与「下单 BOL need booking」第 1 行表头对齐）
+# 报价：P=给客户报价，U=给司机报价；其他费用不在 Sheet，由网页追加（见 schema order_fee_addons）
 columns:
   B: quote_company
   C: ew_quote_no
   D: quote_bol_ref
   E: dat_post_status
   F: status_text
-  G: goods_description
-  H: ship_from
-  I: consignee_contact
-  J: consignee_address
-  K: weight_lbs
-  L: volume_m3
-  M: cargo_value_note
+  G: ctn_total
+  H: goods_description
+  I: ship_from
+  J: consignee_contact
+  K: consignee_address
+  L: weight_lbs
+  M: dimensions_class
+  N: volume_m3
+  O: cargo_value_note
+  P: quote_customer
+  Q: route_miles_note
+  U: quote_driver

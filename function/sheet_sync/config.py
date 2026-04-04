@@ -55,6 +55,21 @@ def _validate_ident(name: str, ctx: str) -> str:
     return name
 
 
+def _parse_color_columns(raw: Any, ctx: str) -> dict[str, str]:
+    """Excel column letter → Postgres column name for fill-color-derived fields."""
+    if not raw:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"{ctx}: color_columns must be a mapping")
+    out: dict[str, str] = {}
+    for k, v in raw.items():
+        ks = str(k).strip().upper()
+        if not re.match(r"^[A-Z]{1,3}$", ks):
+            raise ValueError(f"{ctx}: color_columns key {k!r} must be a column letter (A–ZZZ)")
+        out[ks] = _validate_ident(str(v), f"{ctx}.color_columns")
+    return out
+
+
 @dataclass(frozen=True)
 class ReadingRules:
     """Post-fetch row handling (replaces ad-hoc SheetSQL-style queries)."""
@@ -79,6 +94,35 @@ class SheetSyncJob:
     header_row: int = 1  # 1-based, row that contains column titles
     data_start_row: int = 2  # 1-based, first data row
     reading: ReadingRules = field(default_factory=ReadingRules)
+    # Excel column letter → DB column; fill color read via Sheets API (not cell text)
+    color_columns: dict[str, str] = field(default_factory=dict)
+
+    def insert_column_order(self) -> list[str]:
+        """All DB columns for INSERT/UPSERT and row dict export (values + color-derived)."""
+        seen: set[str] = set()
+        out: list[str] = []
+        for _k, pg in self.columns.items():
+            if pg not in seen:
+                seen.add(pg)
+                out.append(pg)
+        for _letter, pg in self.color_columns.items():
+            if pg not in seen:
+                seen.add(pg)
+                out.append(pg)
+        return out
+
+    def project_normalized_row(self, nr: dict[str, str]) -> dict[str, str]:
+        """Map normalized sheet row (header keys or pg keys) to DB column names."""
+        m: dict[str, str] = {}
+        if self.column_map_mode == "letter":
+            for _letter, pg in self.columns.items():
+                m[pg] = nr.get(pg, "")
+        else:
+            for src_key, pg in self.columns.items():
+                m[pg] = nr.get(src_key, "")
+        for _letter, pg in self.color_columns.items():
+            m[pg] = nr.get(pg, "")
+        return m
 
 
 @dataclass(frozen=True)
@@ -125,7 +169,7 @@ def load_mapping(path: Path) -> AppConfig:
     if not isinstance(raw, dict):
         raise ValueError("mapping root must be a mapping")
 
-    if raw.get("ew_sheet_rules_version"):
+    if raw.get("ew_sheet_rules_version") or raw.get("ew_order_rules_version"):
         return _load_ew_sheet_rules_v1(raw, path)
 
     sid = raw.get("spreadsheet_id")
@@ -181,6 +225,7 @@ def load_mapping(path: Path) -> AppConfig:
 
         hr = int(layout.get("header_row", item.get("header_row", 1)))
         dr = int(layout.get("data_start_row", item.get("data_start_row", hr + 1)))
+        color_cols = _parse_color_columns(item.get("color_columns"), f"sync[{i}]")
 
         jobs.append(
             SheetSyncJob(
@@ -194,6 +239,7 @@ def load_mapping(path: Path) -> AppConfig:
                 header_row=hr,
                 data_start_row=dr,
                 reading=reading,
+                color_columns=color_cols,
             )
         )
 
@@ -205,7 +251,7 @@ def load_mapping(path: Path) -> AppConfig:
 
 
 def _load_ew_sheet_rules_v1(raw: dict[str, Any], path: Path) -> AppConfig:
-    """Single-table rules file: EW_SHEET_RULES.yaml style."""
+    """Single-table rules file (EW_ORDER_RULES.yaml / EW_QUOTE_RULES.yaml style)."""
     src = raw.get("source") or {}
     sid = raw.get("spreadsheet_id") or src.get("spreadsheet_id")
     if not sid or not isinstance(sid, str):
@@ -251,6 +297,8 @@ def _load_ew_sheet_rules_v1(raw: dict[str, Any], path: Path) -> AppConfig:
     else:
         label = str(ws_name)
 
+    color_cols = _parse_color_columns(raw.get("color_columns"), "EW rules")
+
     job = SheetSyncJob(
         label=label,
         worksheet_name=str(ws_name) if ws_name else None,
@@ -262,6 +310,7 @@ def _load_ew_sheet_rules_v1(raw: dict[str, Any], path: Path) -> AppConfig:
         header_row=hr,
         data_start_row=dr,
         reading=reading,
+        color_columns=color_cols,
     )
 
     return AppConfig(

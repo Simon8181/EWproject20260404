@@ -1,0 +1,76 @@
+# =============================================================================
+# 「报价 quote」tab 专用列映射（与「下单 BOL need booking」等 tab 分列）
+# 业务规则（客户价/时效/司机价/Broker±20%）：见仓库根目录 COMPANY_RULES.md §3
+# 同一 spreadsheet 不同 gid → 在 EW_CATALOG.yaml 里单独一条 + 单独 rules 文件
+# 验证：python -m function.sheet_sync --probe --sheet ew_read_quote
+# =============================================================================
+
+ew_sheet_rules_version: 1
+
+mapping:
+  column_mode: letter
+
+source:
+  spreadsheet_id: "1cuPIPfP7WYpBI33UVovFAI7wzH8lAOp3PqGOp8idZfU"
+  worksheet_id: 0
+
+layout:
+  header_row: 1
+  data_start_row: 2
+
+reading:
+  trim_strings: true
+  error_tokens_as_empty:
+    - "#DIV/0!"
+    - "#N/A"
+    - "#REF!"
+    - "#VALUE!"
+  skip_if_empty:
+    - C
+
+postgres:
+  table: ltl_quote_sheet
+  primary_key:
+    - ew_quote_no
+
+# 列字母 → 字段名（按第 1 行表头对齐；右侧更多列可继续补 AA、AB…）
+columns:
+  A: col_dash
+  B: ea
+  C: ew_quote_no
+  D: quote_load_bol
+  E: marker_box
+  F: status
+  G: ctn_total
+  H: goods_description
+  I: ship_from
+  J: consignee_contact
+  K: consignee_address
+  L: weight_lbs
+  M: dimensions_class
+  N: volume_m3
+  O: cargo_value_note
+  P: ew_quote_link
+  Q: distance_miles
+  R: consignee_residential
+  S: pallets_ft_dat
+  T: total_dat_truck_price
+  U: rate_trucking
+  V: dry_van_note
+  W: zip_to_zip
+  X: freight_class
+  Y: platform_quote_1
+  Z: col_z_empty_header
+  AA: platform_quote_2
+  AB: platform_broker_ctc
+  AC: pr1_dat_half
+  AD: ew_flag
+  AE: dat_sales_price_11
+  AF: dat_sales_price_12
+  AG: dat_sales_price_13
+  AH: margin_13x11
+  AI: scam_note
+  AJ: col_aj
+  AK: worker
+  AL: rapiddeals_price2
+  AM: col_am

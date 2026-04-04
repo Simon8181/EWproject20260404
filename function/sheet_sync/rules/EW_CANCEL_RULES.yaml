@@ -1,0 +1,50 @@
+# =============================================================================
+# EW_CANCEL_RULES.yaml —「取消订单/Cancellations」tab
+# =============================================================================
+# 验证：python -m function.sheet_sync --probe --sheet ew_read_cancel
+# 读取：python -m function.sheet_sync --sheet "/F/read/cancel"
+# =============================================================================
+
+ew_order_rules_version: 1
+
+mapping:
+  column_mode: letter
+
+source:
+  spreadsheet_id: "1cuPIPfP7WYpBI33UVovFAI7wzH8lAOp3PqGOp8idZfU"
+  worksheet_id: 1904797895
+
+layout:
+  header_row: 1
+  data_start_row: 2
+
+reading:
+  trim_strings: true
+  error_tokens_as_empty:
+    - "#DIV/0!"
+    - "#N/A"
+    - "#REF!"
+    - "#VALUE!"
+  skip_if_empty:
+    - C
+
+postgres:
+  table: ltl_cancelled_orders
+  primary_key:
+    - ew_quote_no
+
+columns:
+  A: cancel_date
+  B: quote_company
+  C: ew_quote_no
+  D: quote_ref
+  E: mark
+  F: cancel_reason
+  G: ctn_total
+  H: goods_description
+  I: ship_from
+  J: consignee_contact
+  K: consignee_address
+  L: weight_lbs
+  M: dimensions_class
+  N: volume_m3

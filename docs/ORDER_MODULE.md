@@ -1,0 +1,64 @@
+# Order 模块开发记录（暂停）
+
+**状态：暂停** — 当前实现已保存，后续可在此文件续写。
+
+## 范围
+
+- **数据源**：`EW_CATALOG.yaml` 路由 `/f/read/order` → `ew_quote_working` → `function/sheet_sync/rules/EW_ORDER_RULES.yaml`（Google Sheet「下单 BOL need booking」tab）。
+- **HTTP**：`function/ew_service.py` 中当 `name == "order"` 且 `fmt=html` 时，不使用通用表格页，而走专用 **`function/order_view.py`**。
+
+## 已实现
+
+### 列映射（`EW_ORDER_RULES.yaml`）
+
+- **A 列**：不看文字，看**单元格填充色**（Sheets API）——红→`a_cell_status`=`待找车`，绿→`已经安排`；其它/浅色/无法识别则为空。
+- 与表头对齐：G=ctn、H=品名、**I=SHIP FROM（起运）**、J/K=收货、L=lbs、M=尺寸、N=体积、O=货值、**P=给客户报价** `quote_customer`、**Q=mil** `route_miles_note`、**U=给司机报价** `quote_driver`。
+- **其他费用**：不在 Sheet，由**网页追加**；库表 **`order_fee_addons`**（`ew_quote_no` + 金额/备注），与 `WORK_PLAN_SAM_GATE.md` 一致。
+- 曾修正：起运须在 **I 列**，勿误用 H。
+
+### 系统展示规范（起始地 vs 目的）
+
+- **起始地**：卡片与地图尽量输出 **`City, ST 12345`**（或中文城市+州+邮编）。入口 **`function.address_display.resolve_origin_for_order`**：优先从 **`ship_from`** 解析；若 I 列多为货描、无邮编，则回退 **`consignee_contact`** 中带「提货地址 / 发货地址」等标签的段落。地图链接使用解析时采用的**原文**，避免搜「地板」等货名。
+- **单字段**：仅对 `ship_from` 字符串做规范化时可用 **`format_ship_from_for_display`**（不含提货回退）。
+- **目的**：**`consignee_address` / `consignee_contact` 不做上述起始地解析**，卡片为原文拼接；地图用完整目的文案。
+
+### 页面（`order_view.py`）
+
+- 多订单、**紧凑布局**，全页 **移动端适配**（`viewport-fit`、安全区、`100dvh` 等）。
+- **EW 号降序**：`function/ew_sort.py` + `ew_service` 在 order 的 JSON/HTML 中排序。
+- **里程**：Q 列解析数字，**只显示 mi**（`function/route_metrics.py`）。
+- **报价区（DAT 风橙色块）**：展示 **P 客户**、**U 司机**；其他费用为「网页追加」占位说明。
+- **地图交互**：
+  - 点击 **起运** 文案 → Google 地图搜索起点；
+  - 点击 **目的** 文案 → 搜索终点；
+  - **中间「路线」按钮** → `maps/dir` 起点→终点。
+- 下方「里程」块仅保留 Mi；货物/尺寸 chips。
+
+### 数据库
+
+- `schema_ltl_working.sql`：`ltl_working_quotes` 含 `ctn_total`、`dimensions_class`、`route_miles_note` 等；含 `ADD COLUMN IF NOT EXISTS` 便于旧库升级。
+
+### 其它页面
+
+- **主页** `home_page.py`、**通用 HTML 表** `render_html.py`：移动端与横向滚动表。
+
+## 常用命令
+
+```bash
+# 本地读表校验
+python -m function.sheet_sync --sheet ew_quote_working --preview 5
+
+# 服务（order 卡片页）
+uvicorn function.ew_service:app --host 127.0.0.1 --port 8000
+# 浏览器：http://127.0.0.1:8000/f/read/order?fmt=html&limit=50
+```
+
+## 暂停时未做 / 可续
+
+- `--sync` 写库与 order 专用逻辑的一致性回归。
+- 地图链接对**极短/无效地址**的容错与提示文案。
+- 业务规则见仓库根目录 **`COMPANY_RULES.md`**（报价、权限等）。
+
+---
+
+*暂停记录日期以本文件提交时间为准；恢复开发时请先读本节与 `EW_ORDER_RULES.yaml` 注释。*

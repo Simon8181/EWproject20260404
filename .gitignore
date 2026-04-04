@@ -1,10 +1,12 @@
 .env
+config/api.secrets.env
 *.pem
 **/credentials*.json
 # GCP console 下载的服务账号 JSON（常见形如 project-id-xxxxx.json）
 *-*.json
 !package-lock.json
 secrets/
+temp/
 __pycache__/
 *.py[cod]
 .Python

@@ -7,10 +7,14 @@
 #   - aliases_zh / aliases_en：自然语言别名（例如「下单 BOL need booking」）
 #   - google：与浏览器 URL 一致；worksheet_id 即链接里 gid=
 #   - rules_file：相对仓库根目录，指向 function/sheet_sync/rules 下的列映射规则
+#     每个 tab（不同 gid）单独一条目录 + 单独 YAML，列结构互不共用
 #
 # 读取示例（在仓库根目录）：
 #   python -m function.sheet_sync --sheet ew_quote_working
 #   python -m function.sheet_sync --sheet "/F/read/order"
+#   python -m function.sheet_sync --sheet "/F/read/quote"
+#   python -m function.sheet_sync --sheet "/F/read/complete"
+#   python -m function.sheet_sync --sheet "/F/read/cancel"
 #   python -m function.sheet_sync --probe --sheet ew_quote_working
 # =============================================================================
 
@@ -34,4 +38,58 @@ sheets:
       worksheet_id: 589486198
       url: "https://docs.google.com/spreadsheets/d/1cuPIPfP7WYpBI33UVovFAI7wzH8lAOp3PqGOp8idZfU/edit?gid=589486198#gid=589486198"
       tab_title_hint: "1-25 LTL内部报价-ew  working 总表"
-    rules_file: "function/sheet_sync/rules/EW_SHEET_RULES.yaml"
+    rules_file: "function/sheet_sync/rules/EW_ORDER_RULES.yaml"
+
+  ew_read_quote:
+    id: ew_read_quote
+    note: "报价 quote tab — 列结构与「下单」不同，单独 rules 文件"
+    routes:
+      - "/F/read/quote"
+    aliases_zh:
+      - "报价 quote"
+      - "报价"
+    aliases_en:
+      - "quote sheet"
+      - "read quote"
+    google:
+      spreadsheet_id: "1cuPIPfP7WYpBI33UVovFAI7wzH8lAOp3PqGOp8idZfU"
+      worksheet_id: 0
+      url: "https://docs.google.com/spreadsheets/d/1cuPIPfP7WYpBI33UVovFAI7wzH8lAOp3PqGOp8idZfU/edit?gid=0#gid=0"
+      tab_title_hint: "报价 quote"
+    rules_file: "function/sheet_sync/rules/EW_QUOTE_RULES.yaml"
+
+  ew_read_complete:
+    id: ew_read_complete
+    note: "POD 收钱 — 完成 / POD / 收款（列规则见 EW_COMPLETE_RULES）"
+    routes:
+      - "/F/read/complete"
+    aliases_zh:
+      - "POD 收钱"
+      - "POD"
+    aliases_en:
+      - "pod complete"
+      - "read complete"
+    google:
+      spreadsheet_id: "1cuPIPfP7WYpBI33UVovFAI7wzH8lAOp3PqGOp8idZfU"
+      worksheet_id: 1850995588
+      url: "https://docs.google.com/spreadsheets/d/1cuPIPfP7WYpBI33UVovFAI7wzH8lAOp3PqGOp8idZfU/edit?gid=1850995588#gid=1850995588"
+      tab_title_hint: "POD 收钱"
+    rules_file: "function/sheet_sync/rules/EW_COMPLETE_RULES.yaml"
+
+  ew_read_cancel:
+    id: ew_read_cancel
+    note: "取消订单/Cancellations"
+    routes:
+      - "/F/read/cancel"
+    aliases_zh:
+      - "取消订单"
+      - "Cancellations"
+    aliases_en:
+      - "cancel"
+      - "read cancel"
+    google:
+      spreadsheet_id: "1cuPIPfP7WYpBI33UVovFAI7wzH8lAOp3PqGOp8idZfU"
+      worksheet_id: 1904797895
+      url: "https://docs.google.com/spreadsheets/d/1cuPIPfP7WYpBI33UVovFAI7wzH8lAOp3PqGOp8idZfU/edit?gid=1904797895#gid=1904797895"
+      tab_title_hint: "取消订单/Cancellations"
+    rules_file: "function/sheet_sync/rules/EW_CANCEL_RULES.yaml"

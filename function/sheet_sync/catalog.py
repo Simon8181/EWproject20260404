@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+_READ_ROUTE_RE = re.compile(r"^/*[Ff]/read/([^/\s]+)", re.IGNORECASE)
 
 # function/sheet_sync/catalog.py → parents[2] = EW project root
 def project_root() -> Path:
@@ -42,7 +45,7 @@ def find_sheet_entry(catalog: dict[str, Any], key: str) -> tuple[str, dict[str, 
         if not isinstance(entry, dict):
             continue
         for r in entry.get("routes", []) or []:
-            if _normalize_key(str(r)) == key_n:
+            if _normalize_key(str(r)).casefold() == key_n.casefold():
                 return sid, entry
         for a in entry.get("aliases_zh", []) or []:
             if _normalize_key(str(a)) == key_n:
@@ -65,6 +68,35 @@ def resolve_rules_for_sheet(key: str) -> Path:
     if not path.is_file():
         raise FileNotFoundError(f"Rules file from catalog: {path}")
     return path
+
+
+def list_catalog_read_routes() -> list[dict[str, Any]]:
+    """One entry per catalog sheet that defines a `/f/read/{name}` style route (for homepage links)."""
+    out: list[dict[str, Any]] = []
+    catalog = load_catalog()
+    sheets = catalog.get("sheets")
+    if not isinstance(sheets, dict):
+        return out
+    for sheet_id, entry in sheets.items():
+        if not isinstance(entry, dict):
+            continue
+        for r in entry.get("routes") or []:
+            m = _READ_ROUTE_RE.match(str(r).strip())
+            if m:
+                name = m.group(1)
+                g = entry.get("google") or {}
+                out.append(
+                    {
+                        "sheet_id": sheet_id,
+                        "name": name,
+                        "path": f"/f/read/{name}",
+                        "note": str(entry.get("note") or ""),
+                        "tab_hint": str(g.get("tab_title_hint") or ""),
+                    }
+                )
+                break
+    out.sort(key=lambda x: str(x.get("name", "")))
+    return out
 
 
 def get_google_for_sheet(key: str) -> tuple[str, int | None, str | None]:

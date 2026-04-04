@@ -15,6 +15,7 @@ from .config import (
     database_url,
     is_column_letters,
 )
+from .sheet_cell_colors import fetch_column_fill_labels
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,7 @@ def fetch_worksheet_rows(
         )
     if dr < hr:
         raise ValueError("data_start_row must be >= header_row")
+    header: list[str] = []
     if job.column_map_mode == "letter":
         body = values[dr:] if dr < len(values) else []
         max_idx = max(column_letter_to_index(L) for L in job.columns.keys())
@@ -123,11 +125,25 @@ def fetch_worksheet_rows(
                 idx = column_letter_to_index(L)
                 d[pg] = cells[idx] if idx < len(cells) else ""
             rows.append(d)
-        return [], rows
+    else:
+        header = [str(h).strip() for h in values[hr]]
+        body = values[dr:] if dr < len(values) else []
+        rows = _rows_to_dicts(header, body)
 
-    header = [str(h).strip() for h in values[hr]]
-    body = values[dr:] if dr < len(values) else []
-    rows = _rows_to_dicts(header, body)
+    if job.color_columns and rows:
+        for letter, field_name in job.color_columns.items():
+            labels = fetch_column_fill_labels(
+                spreadsheet_id,
+                ws.title,
+                letter.upper(),
+                job.data_start_row,
+                len(rows),
+            )
+            for i, row in enumerate(rows):
+                row[field_name] = labels[i] if i < len(labels) else ""
+
+    if job.column_map_mode == "letter":
+        return [], rows
     return header, rows
 
 
@@ -136,7 +152,7 @@ def upsert_job(conn: psycopg.Connection, job: SheetSyncJob, rows: list[dict[str,
         logger.info("No data rows for %s -> %s", job.label, job.table)
         return 0
 
-    pg_cols = list(job.columns.values())
+    pg_cols = job.insert_column_order()
     pk_set = set(job.primary_key)
     update_cols = [c for c in pg_cols if c not in pk_set]
 
@@ -160,24 +176,7 @@ def upsert_job(conn: psycopg.Connection, job: SheetSyncJob, rows: list[dict[str,
     n = 0
     with conn.cursor() as cur:
         for r in rows:
-            values: list[Any] = []
-            missing = False
-            for src_key, pg_col in job.columns.items():
-                if job.column_map_mode == "letter":
-                    val = r.get(pg_col)
-                else:
-                    if src_key not in r:
-                        logger.warning(
-                            "Sheet header %r not in row keys (worksheet %s); skipping row",
-                            src_key,
-                            job.label,
-                        )
-                        missing = True
-                        break
-                    val = r[src_key]
-                values.append(val)
-            if missing:
-                continue
+            values = [r.get(pg_col) for pg_col in pg_cols]
             cur.execute(sql, values)
             n += cur.rowcount if cur.rowcount >= 0 else 1
     return n
@@ -197,17 +196,7 @@ def run_sync(cfg: AppConfig) -> dict[str, int]:
                 nr = normalize_row_strings(r, job.reading)
                 if not row_passes_filters(nr, job.reading, job):
                     continue
-                if job.column_map_mode == "letter":
-                    mapped_rows.append(
-                        {pg: nr.get(pg, "") for pg in job.columns.values()}
-                    )
-                else:
-                    mapped_rows.append(
-                        {
-                            pg: nr.get(src_key, "")
-                            for src_key, pg in job.columns.items()
-                        }
-                    )
+                mapped_rows.append(job.project_normalized_row(nr))
             n = upsert_job(conn, job, mapped_rows)
             conn.commit()
             counts[f"{job.label}->{job.table}"] = n

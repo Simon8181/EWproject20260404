@@ -1,0 +1,68 @@
+# =============================================================================
+# EW_COMPLETE_RULES.yaml —「POD 收钱」tab（完成 / POD / 收款侧）
+# =============================================================================
+# 验证：python -m function.sheet_sync --probe --sheet ew_read_complete
+# 读取：python -m function.sheet_sync --sheet "/F/read/complete"
+# =============================================================================
+
+ew_order_rules_version: 1
+
+mapping:
+  column_mode: letter
+
+source:
+  spreadsheet_id: "1cuPIPfP7WYpBI33UVovFAI7wzH8lAOp3PqGOp8idZfU"
+  worksheet_id: 1850995588
+
+layout:
+  header_row: 1
+  data_start_row: 2
+
+reading:
+  trim_strings: true
+  error_tokens_as_empty:
+    - "#DIV/0!"
+    - "#N/A"
+    - "#REF!"
+    - "#VALUE!"
+  skip_if_empty:
+    - D
+
+postgres:
+  table: ltl_pod_complete
+  primary_key:
+    - ew_quote_no
+
+columns:
+  A: col_a_seq
+  B: dhg_pod_date
+  C: quote_company
+  D: ew_quote_no
+  E: mark_box
+  F: pod_delivered_billed
+  G: ctn_total
+  H: goods_description
+  I: ship_from
+  J: consignee_contact
+  K: consignee_address
+  L: weight_lbs
+  M: dimensions_class
+  N: volume_m3
+  O: cargo_value
+  P: ew_quote_link
+  Q: miles
+  R: consignee_residential
+  S: col_s_empty
+  T: total_dat
+  U: drive
+  V: ratio_26_13
+  W: coefficient
+  X: dat_per_pallets
+  Y: pr1
+  Z: x4pll_quote
+  AA: pr1_dat_half
+  AB: dat_sales_price
+  AC: dat_sales_price_11
+  AD: dat_sales_price_12
+  AE: dat_sales_price_13
+  AF: row_seq
