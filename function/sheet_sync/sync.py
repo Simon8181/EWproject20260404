@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 import gspread
@@ -147,12 +148,20 @@ def fetch_worksheet_rows(
     return header, rows
 
 
-def upsert_job(conn: psycopg.Connection, job: SheetSyncJob, rows: list[dict[str, Any]]) -> int:
+def upsert_job(
+    conn: psycopg.Connection,
+    job: SheetSyncJob,
+    rows: list[dict[str, Any]],
+    *,
+    set_synced_at: bool = False,
+) -> int:
     if not rows:
         logger.info("No data rows for %s -> %s", job.label, job.table)
         return 0
 
-    pg_cols = job.insert_column_order()
+    pg_cols = list(job.insert_column_order())
+    if set_synced_at and "synced_at" not in pg_cols:
+        pg_cols.append("synced_at")
     pk_set = set(job.primary_key)
     update_cols = [c for c in pg_cols if c not in pk_set]
 
@@ -174,15 +183,24 @@ def upsert_job(conn: psycopg.Connection, job: SheetSyncJob, rows: list[dict[str,
         )
 
     n = 0
+    now = datetime.now(timezone.utc)
     with conn.cursor() as cur:
         for r in rows:
-            values = [r.get(pg_col) for pg_col in pg_cols]
+            row = dict(r)
+            if set_synced_at:
+                row["synced_at"] = now
+            values = [row.get(pg_col) for pg_col in pg_cols]
             cur.execute(sql, values)
             n += cur.rowcount if cur.rowcount >= 0 else 1
     return n
 
 
 def run_sync(cfg: AppConfig) -> dict[str, int]:
+    return sync_config_to_db(cfg, set_synced_at=True)
+
+
+def sync_config_to_db(cfg: AppConfig, *, set_synced_at: bool = True) -> dict[str, int]:
+    """Fetch all mapped rows from Sheet(s) and upsert into Postgres (ON CONFLICT UPDATE)."""
     gc = _open_sheet_client()
     url = database_url()
     counts: dict[str, int] = {}
@@ -197,7 +215,7 @@ def run_sync(cfg: AppConfig) -> dict[str, int]:
                 if not row_passes_filters(nr, job.reading, job):
                     continue
                 mapped_rows.append(job.project_normalized_row(nr))
-            n = upsert_job(conn, job, mapped_rows)
+            n = upsert_job(conn, job, mapped_rows, set_synced_at=set_synced_at)
             conn.commit()
             counts[f"{job.label}->{job.table}"] = n
             logger.info("Upserted %s rows for %s -> %s", n, job.label, job.table)

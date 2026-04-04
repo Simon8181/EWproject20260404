@@ -44,7 +44,7 @@
 | **其他费用** | **网页追加**，表 **`order_fee_addons`**（待接 API / 录入 UI） |
 | 货值等其它列 | 仍以 `O` 等现有映射为准；若再扩列，书面补充 |
 
-**开发**：`EW_ORDER_RULES.yaml` + `schema_ltl_working.sql` 已含 P/U 与 `order_fee_addons`；下一步为追加费用 API 与账面公式。
+**开发**：`EW_ORDER_RULES.yaml` + `db/schema_order.sql`（`ew_orders`）已含 P/U 与 `order_fee_addons`；下一步为追加费用 API 与账面公式。
 
 ---
 

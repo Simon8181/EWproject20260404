@@ -3,6 +3,10 @@
 # 业务规则（客户价/时效/司机价/Broker±20%）：见仓库根目录 COMPANY_RULES.md §3
 # 同一 spreadsheet 不同 gid → 在 EW_CATALOG.yaml 里单独一条 + 单独 rules 文件
 # 验证：python -m function.sheet_sync --probe --sheet ew_read_quote
+#
+# 【与下单表区别】本 tab **没有「找车状态」**：「待找车 / 已经安排」仅来自「下单 BOL」
+# 工作表 **A 列填色**（映射字段 a_cell_status）。报价表无该列，下表 F 列 status 等为
+# 报价流程自有状态，勿与找车状态混用。
 # =============================================================================
 
 ew_sheet_rules_version: 1
@@ -34,43 +38,44 @@ postgres:
     - ew_quote_no
 
 # 列字母 → 字段名（按第 1 行表头对齐；右侧更多列可继续补 AA、AB…）
+# 行尾 # 为中文说明（非找车状态，见文件头）
 columns:
-  A: col_dash
-  B: ea
-  C: ew_quote_no
-  D: quote_load_bol
-  E: marker_box
-  F: status
-  G: ctn_total
-  H: goods_description
-  I: ship_from
-  J: consignee_contact
-  K: consignee_address
-  L: weight_lbs
-  M: dimensions_class
-  N: volume_m3
-  O: cargo_value_note
-  P: ew_quote_link
-  Q: distance_miles
-  R: consignee_residential
-  S: pallets_ft_dat
-  T: total_dat_truck_price
-  U: rate_trucking
-  V: dry_van_note
-  W: zip_to_zip
-  X: freight_class
-  Y: platform_quote_1
-  Z: col_z_empty_header
-  AA: platform_quote_2
-  AB: platform_broker_ctc
-  AC: pr1_dat_half
-  AD: ew_flag
-  AE: dat_sales_price_11
-  AF: dat_sales_price_12
-  AG: dat_sales_price_13
-  AH: margin_13x11
-  AI: scam_note
-  AJ: col_aj
-  AK: worker
-  AL: rapiddeals_price2
-  AM: col_am
+  A: col_dash  # 占位/分隔
+  B: ea  # EA
+  C: ew_quote_no  # EW 单号（主键）
+  D: quote_load_bol  # 报价侧 load / BOL 参考
+  E: marker_box  # 标记框
+  F: status  # 报价流程状态（非下单表的找车状态）
+  G: ctn_total  # 件数/箱数
+  H: goods_description  # 品名/货描
+  I: ship_from  # 起运/SHIP FROM
+  J: consignee_contact  # 收货方联系
+  K: consignee_address  # 收货地址
+  L: weight_lbs  # 重量 lbs
+  M: dimensions_class  # 尺寸等级
+  N: volume_m3  # 体积 m³
+  O: cargo_value_note  # 货值说明
+  P: ew_quote_link  # EW 报价链接
+  Q: distance_miles  # 里程 mi
+  R: consignee_residential  # 是否住宅派送等
+  S: pallets_ft_dat  # 板数/尺 DAT
+  T: total_dat_truck_price  # DAT 卡车总价
+  U: rate_trucking  # 卡车运价/费率
+  V: dry_van_note  # Dry Van 备注
+  W: zip_to_zip  # 邮编对邮编
+  X: freight_class  # 货运等级
+  Y: platform_quote_1  # 平台报价 1
+  Z: col_z_empty_header  # 空表头列（占位）
+  AA: platform_quote_2  # 平台报价 2
+  AB: platform_broker_ctc  # 平台 Broker CTC
+  AC: pr1_dat_half  # PR1 / DAT half 等内部口径
+  AD: ew_flag  # EW 标记
+  AE: dat_sales_price_11  # DAT 销售价档 11
+  AF: dat_sales_price_12  # DAT 销售价档 12
+  AG: dat_sales_price_13  # DAT 销售价档 13
+  AH: margin_13x11  # 毛利 13×11 等
+  AI: scam_note  # 风险/诈骗备注
+  AJ: col_aj  # 扩展列 AJ
+  AK: worker  # 经办人
+  AL: rapiddeals_price2  # RapidDeals 价 2
+  AM: col_am  # 扩展列 AM

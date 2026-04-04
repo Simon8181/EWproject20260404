@@ -9,9 +9,9 @@ from pathlib import Path
 from function.api_config import integration_snapshot
 
 _ADMIN_CSS = """
-  :root { --bg:#0a0a0a; --fg:#e5e7eb; --muted:#9ca3af; --orange:#ff6600; --bd:#2e2e2e; }
-  body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--fg); margin: 0; padding: 24px; }
-  h1 { font-size: 1.25rem; color: var(--orange); margin: 0 0 8px; }
+  :root { --bg:#090b10; --fg:#e8edf4; --muted:#8b98a8; --orange:#38bdf8; --bd:rgba(255,255,255,.09); }
+  body { font-family: system-ui, sans-serif; background: linear-gradient(165deg, #07080c, #0c1018); color: var(--fg); margin: 0; padding: 24px; }
+  h1 { font-size: 1.25rem; color: var(--orange); margin: 0 0 8px; font-weight: 600; letter-spacing: -0.02em; }
   .lead { color: var(--muted); font-size: 0.9rem; margin-bottom: 20px; max-width: 56ch; }
   table { border-collapse: collapse; width: 100%; max-width: 720px; }
   th, td { border: 1px solid var(--bd); padding: 10px 12px; text-align: left; font-size: 0.9rem; }

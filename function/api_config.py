@@ -4,6 +4,10 @@ Central API configuration: load env files and expose getters for keys / future e
 Load order (later overrides earlier for duplicate variable names):
   1. Repository root `.env`
   2. `config/api.secrets.env` (optional; use for API keys only)
+  3. `config/ew_settings.env` (optional; 可由 /config 页面保存的非敏感项，如 ORDER_GOOGLE_MILES_MAX)
+
+After that, if root `.env` defines `DATABASE_URL`, it is applied again so the process
+always uses the same DB URL as your local schema (see db/schema_order.sql).
 
 Add new providers by extending `config/api.secrets.env` + a small getter below.
 
@@ -26,14 +30,49 @@ _ROOT = Path(__file__).resolve().parents[1]
 _CONFIG_DIR = _ROOT / "config"
 
 
+def _database_url_from_root_dotenv() -> str | None:
+    """Read only DATABASE_URL from repo root `.env` (BOM-safe), without applying other keys."""
+    p = _ROOT / ".env"
+    if not p.is_file():
+        return None
+    try:
+        text = p.read_text(encoding="utf-8-sig")
+    except OSError:
+        return None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        if key.strip() != "DATABASE_URL":
+            continue
+        v = val.strip().strip('"').strip("'")
+        return v if v else None
+    return None
+
+
 def _load_api_env() -> None:
-    load_dotenv(_ROOT / ".env")
+    # utf-8-sig: strip BOM so keys are not read as "\ufeffGOOGLE_..."
+    _enc = "utf-8-sig"
+    load_dotenv(_ROOT / ".env", override=False, encoding=_enc)
     secrets = _CONFIG_DIR / "api.secrets.env"
     if secrets.is_file():
-        load_dotenv(secrets, override=True)
+        load_dotenv(secrets, override=True, encoding=_enc)
+    runtime = _CONFIG_DIR / "ew_settings.env"
+    if runtime.is_file():
+        load_dotenv(runtime, override=True, encoding=_enc)
+    # 根目录 .env 里的 DATABASE_URL 优先生效，避免 api.secrets.env 误写覆盖后连到无 ew_orders 的库
+    du = _database_url_from_root_dotenv()
+    if du:
+        os.environ["DATABASE_URL"] = du
 
 
 _load_api_env()
+
+# 由 /config 保存页写入，仅允许白名单键
+EW_SETTINGS_FILE = _CONFIG_DIR / "ew_settings.env"
 
 
 def _mask_secret(value: str, *, keep_start: int = 4, keep_end: int = 4) -> str:
@@ -43,13 +82,39 @@ def _mask_secret(value: str, *, keep_start: int = 4, keep_end: int = 4) -> str:
     return v[:keep_start] + "…" + v[-keep_end:]
 
 
+def _normalize_maps_key(raw: str) -> str:
+    """Strip spaces, ASCII quotes, and common Unicode ‘smart’ quotes from pasted .env values."""
+    s = raw.strip().strip("'\"")
+    for ch in ("\u201c", "\u201d", "\u2018", "\u2019"):  # “ ” ‘ ’
+        s = s.replace(ch, "")
+    return s.strip()
+
+
+def _maps_key_from_optional_file() -> str | None:
+    """Single-line fallback if env vars are empty (config/google_maps_api_key.txt)."""
+    p = _CONFIG_DIR / "google_maps_api_key.txt"
+    if not p.is_file():
+        return None
+    try:
+        line = p.read_text(encoding="utf-8-sig").strip()
+    except OSError:
+        return None
+    for raw in line.splitlines():
+        t = raw.strip()
+        if t and not t.startswith("#"):
+            return _normalize_maps_key(t)
+    return None
+
+
 def google_maps_api_key() -> str | None:
     """Maps Platform: Distance Matrix, Geocoding, etc."""
     k = (
         os.environ.get("GOOGLE_MAPS_API_KEY")
         or os.environ.get("MAPS_API_KEY")
+        or _maps_key_from_optional_file()
         or ""
-    ).strip()
+    )
+    k = _normalize_maps_key(k)
     return k or None
 
 
@@ -61,6 +126,46 @@ def maps_api_key() -> str | None:
 def reload_api_env() -> None:
     """Tests or long-running workers after file change (optional)."""
     _load_api_env()
+
+
+def ew_admin_order_sync_label() -> str:
+    """Shown next to the order page one-click sync button (bookmark with ?token=)."""
+    v = (os.environ.get("EW_ADMIN_DISPLAY_NAME") or "").strip()
+    return v if v else "Simon"
+
+
+def save_order_google_miles_max_ui(value: int) -> None:
+    """
+    将 ORDER_GOOGLE_MILES_MAX 写入 config/ew_settings.env 并 reload 环境。
+    仅用于配置页；数值范围由调用方校验。
+    """
+    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    text = (
+        "# Auto-written by EW /config — overrides .env for this key only.\n"
+        f"ORDER_GOOGLE_MILES_MAX={int(value)}\n"
+    )
+    EW_SETTINGS_FILE.write_text(text, encoding="utf-8")
+    reload_api_env()
+
+
+def configuration_snapshot() -> dict[str, Any]:
+    """
+    非敏感运行时信息（路径、文件是否存在、常用 env 开关），供 /config 页面展示。
+    """
+    sa = (os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
+    sa_path = Path(sa).expanduser() if sa else None
+    return {
+        "repo_root": str(_ROOT),
+        "dot_env_exists": (_ROOT / ".env").is_file(),
+        "api_secrets_env_exists": (_CONFIG_DIR / "api.secrets.env").is_file(),
+        "ew_settings_env_exists": EW_SETTINGS_FILE.is_file(),
+        "order_google_miles_max": (os.environ.get("ORDER_GOOGLE_MILES_MAX") or "30").strip() or "30",
+        "order_places_land_use": (os.environ.get("ORDER_PLACES_LAND_USE") or "0").strip() or "0",
+        "admin_token_configured": bool(os.environ.get("EW_ADMIN_TOKEN", "").strip()),
+        "google_application_credentials_set": bool(sa),
+        "google_application_credentials_file_ok": bool(sa_path and sa_path.is_file()),
+        "google_application_credentials_basename": sa_path.name if sa_path else None,
+    }
 
 
 def integration_snapshot() -> list[dict[str, Any]]:

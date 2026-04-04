@@ -36,7 +36,7 @@
 
 ### 数据库
 
-- `schema_ltl_working.sql`：`ltl_working_quotes` 含 `ctn_total`、`dimensions_class`、`route_miles_note` 等；含 `ADD COLUMN IF NOT EXISTS` 便于旧库升级。
+- **`db/schema_order.sql`**：主表 **`ew_orders`**（与 `EW_ORDER_RULES.yaml` 的 `postgres.table` 一致），`order_fee_addons` 按 `ew_quote_no` 关联。旧名 `ltl_working_quotes` 见 `db/schema_ltl_working.sql` 中的迁移说明。
 
 ### 其它页面
 

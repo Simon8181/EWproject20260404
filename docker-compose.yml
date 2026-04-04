@@ -1,0 +1,27 @@
+# 可选：无 Docker 时用 Homebrew Postgres（本机已用 brew 跑 5432 时可不读此文件）
+# 启动：docker compose up -d
+# 停止：docker compose down（数据卷保留；加 -v 可删库）
+# 默认端口 5433→5432，避免与主机 5432 上已有实例冲突
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ew-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ew
+      POSTGRES_PASSWORD: ew_dev_local
+      POSTGRES_DB: ew
+    ports:
+      # 主机 5433 → 避免与系统已有 5432 冲突
+      - "5433:5432"
+    volumes:
+      - ew_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ew -d ew"]
+      interval: 4s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  ew_pgdata:

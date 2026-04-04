@@ -1,0 +1,6 @@
+-- 已迁移：下单域表结构见 db/schema_order.sql（主表名 ew_orders）。
+-- 新建数据库请执行：  psql ... -f db/schema_order.sql
+--
+-- 若旧库仍为 ltl_working_quotes，请先执行一次重命名再与代码同步：
+--   ALTER TABLE ltl_working_quotes RENAME TO ew_orders;
+-- 然后补跑 db/schema_order.sql 中的 CREATE INDEX / COMMENT（CREATE TABLE IF NOT EXISTS 会跳过已存在表）。

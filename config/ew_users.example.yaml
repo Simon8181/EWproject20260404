@@ -1,0 +1,6 @@
+# 复制为 config/ew_users.yaml（勿提交 Git），或用 CLI 生成：
+#   python -m function.create_user simon developer
+#
+# 角色：developer（全站+用户管理）、boss（订单+集成+配置只读）、broker（订单+同步）
+version: 1
+users: {}

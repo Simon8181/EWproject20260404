@@ -1,5 +1,9 @@
 .env
 config/api.secrets.env
+config/ew_users.yaml
+config/google_maps_api_key.txt
+# 由 /config 页面保存的运行时覆盖（可选提交）
+config/ew_settings.env
 *.pem
 **/credentials*.json
 # GCP console 下载的服务账号 JSON（常见形如 project-id-xxxxx.json）

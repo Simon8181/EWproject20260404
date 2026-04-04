@@ -36,7 +36,7 @@ reading:
     - C
 
 postgres:
-  table: ltl_working_quotes
+  table: ew_orders
   primary_key:
     - ew_quote_no
 
@@ -46,6 +46,8 @@ color_columns:
 
 # 列字母 → 字段名（与「下单 BOL need booking」第 1 行表头对齐）
 # 报价：P=给客户报价，U=给司机报价；其他费用不在 Sheet，由网页追加（见 schema order_fee_addons）
+# 接单（下订单/派车）：V/W/X 对应 Broker、Rate、Carriers（含 MC#）。若表上列位置变了，请改下列字母，
+# 或改用 mapping.column_mode: header 并用第 1 行表头原文作键（整表统一一种模式）。
 columns:
   B: quote_company
   C: ew_quote_no
@@ -64,3 +66,6 @@ columns:
   P: quote_customer
   Q: route_miles_note
   U: quote_driver
+  V: booking_broker
+  W: booking_rate
+  X: carrier_mc
