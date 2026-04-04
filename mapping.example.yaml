@@ -1,0 +1,20 @@
+# Copy to mapping.yaml and edit. Table must exist in Postgres with matching columns.
+# Share the Google Sheet with the service account email inside your JSON (client_email).
+
+version: 1
+# From URL https://docs.google.com/spreadsheets/d/<spreadsheet_id>/edit?gid=<worksheet_id>
+spreadsheet_id: "YOUR_SPREADSHEET_ID_FROM_URL"
+
+sync:
+  # Tab by URL gid (recommended when the tab title is long or duplicated):
+  # worksheet_id: 589486198
+  # Or tab by exact title:
+  - worksheet: "Sheet1"
+    table: "sheet_mirror"
+    # Columns that uniquely identify a row (must match a UNIQUE or PRIMARY KEY on the table)
+    primary_key: ["id"]
+    # First row of the sheet = headers; map header text -> PostgreSQL column name
+    columns:
+      "id": "id"
+      "Name": "name"
+      "Updated": "updated_at"

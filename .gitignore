@@ -1,0 +1,14 @@
+.env
+*.pem
+**/credentials*.json
+# GCP console 下载的服务账号 JSON（常见形如 project-id-xxxxx.json）
+*-*.json
+!package-lock.json
+secrets/
+__pycache__/
+*.py[cod]
+.Python
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/

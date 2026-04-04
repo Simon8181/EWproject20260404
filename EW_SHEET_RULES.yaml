@@ -1,0 +1,55 @@
+# =============================================================================
+# EW_SHEET_RULES.yaml — Sheet 读取规则（本仓库替代 SheetSQL 的约定）
+# =============================================================================
+# 映射方式（二选一）：
+#   - mapping.column_mode: letter  → 用 Excel 列字母 A、B、C、AA…（与表头文字无关）
+#   - 省略 letter 且 keys 为第 1 行「单元格原文」→ 按表头文字匹配（旧方式）
+# 行范围：layout.header_row / data_start_row（1-based）
+#
+# 验证列字母是否对应正确：python -m sheet_sync --probe --spreadsheet-id … --worksheet-id …
+# 按规则读取 JSON：python -m sheet_sync
+# =============================================================================
+
+ew_sheet_rules_version: 1
+
+mapping:
+  column_mode: letter
+
+source:
+  spreadsheet_id: "1cuPIPfP7WYpBI33UVovFAI7wzH8lAOp3PqGOp8idZfU"
+  worksheet_id: 589486198
+
+layout:
+  header_row: 1
+  data_start_row: 2
+
+reading:
+  trim_strings: true
+  error_tokens_as_empty:
+    - "#DIV/0!"
+    - "#N/A"
+    - "#REF!"
+    - "#VALUE!"
+  # 列字母模式下写列字母（与上面 columns 的键一致）；表头模式下写第 1 行表头原文
+  skip_if_empty:
+    - C
+
+postgres:
+  table: ltl_working_quotes
+  primary_key:
+    - ew_quote_no
+
+# 列字母 → 数据库列名（按你表实际列位调整；与 Google 第 1 行标题文字无关）
+columns:
+  B: quote_company
+  C: ew_quote_no
+  D: quote_bol_ref
+  E: dat_post_status
+  F: status_text
+  G: goods_description
+  H: ship_from
+  I: consignee_contact
+  J: consignee_address
+  K: weight_lbs
+  L: volume_m3
+  M: cargo_value_note
