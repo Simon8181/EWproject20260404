@@ -430,7 +430,7 @@ def _margin_diff_minus(
     a: float | tuple[float, float],
     b: float | tuple[float, float],
 ) -> float | tuple[float, float] | None:
-    """标量/区间差：待找车 P−U、已安排 U−W 同一套规则。"""
+    """标量/区间差：客户报价(P) − 司机价(U)。"""
     if isinstance(a, tuple) and isinstance(b, float):
         return (a[0] - b, a[1] - b)
     if isinstance(a, float) and isinstance(b, tuple):
@@ -467,46 +467,78 @@ def _format_fold_margin_inner_and_class(
     return inner, cls
 
 
+def _margin_diff_is_entirely_negative(diff: float | tuple[float, float]) -> bool:
+    """是否应视为「负差价」并触发规范化重算；区间跨 0 不算。"""
+    if isinstance(diff, float):
+        return diff < -1e-9
+    lo, hi = diff
+    if lo > hi:
+        lo, hi = hi, lo
+    return hi < -1e-9
+
+
+def _parse_fold_price_normalized_retry(text: str) -> float | tuple[float, float] | None:
+    """
+    负差价时第二次解析：格内有 ``$`` 时只取美元金额（max），减少邮编等噪声；
+    无 ``$`` 时与常规解析相同。
+    """
+    t = str(text or "").strip()
+    if not t:
+        return None
+    ds = _dollar_amounts_from_text(t)
+    if ds:
+        return float(max(ds))
+    return parse_fold_price_scalar_or_range(t)
+
+
 def summary_fold_margin_block(
     *,
     a_cell: str,
     quote_customer: str,
     quote_driver: str,
-    booking_rate: str,
+    booking_rate: str = "",
 ) -> str:
     """
-    折叠行右下角：待找车 = 客户报价(P) − 司机价(U)；
-    已经安排（已接单）= 司机价(U) − 接单 Rate(W)。
-    P/U/W 支持单元格内加减乘除与括号（安全解析，非 eval）。
-    客户报价为 ``770-800`` 区间、司机价为标量时，差价为区间（如 ``+$470–$500``）。
+    折叠行右下角：**差价 = 客户报价(P) − 司机价(U)**（与 A 列状态无关）。
+    若首次结果为负：用「优先 \$」对客户价、司机价再解析；仍负或无法解析则显示 ``-``。
+    ``booking_rate`` 保留参数以兼容调用方，不参与差价。
     """
+    _ = booking_rate
     ac = (a_cell or "").strip()
-    p = parse_fold_price_scalar_or_range(quote_customer)
-    u = parse_fold_price_scalar_or_range(quote_driver)
-    w = parse_fold_price_scalar_or_range(booking_rate)
-
-    title: str
-    diff: float | tuple[float, float] | None = None
-
-    if ac == "待找车":
-        title = "差价 = 客户报价(P) − 司机价(U)；区间时显示 P−U 的上下界"
-        if p is not None and u is not None:
-            diff = _margin_diff_minus(p, u)
-    elif ac == "已经安排":
-        if u is not None and w is not None:
-            title = "差价 = 司机价(U) − 接单 Rate(W)；区间时显示上下界"
-            diff = _margin_diff_minus(u, w)
-        elif p is not None and u is not None:
-            title = "差价 = 客户报价(P) − 司机价(U)（接单 Rate 未解析或非金额时）"
-            diff = _margin_diff_minus(p, u)
-        else:
-            title = "差价 = 司机价(U) − 接单 Rate(W)"
-    else:
+    if ac not in ("待找车", "已经安排"):
         return ""
 
+    title = "差价 = 客户报价(P) − 司机价(U)；区间时显示 P−U 的上下界"
+    p = parse_fold_price_scalar_or_range(quote_customer)
+    u = parse_fold_price_scalar_or_range(quote_driver)
+
+    if p is None or u is None:
+        inner = "—"
+        cls = "oc-sum-margin-val oc-sum-margin-val--empty"
+        return (
+            f'<div class="oc-sum-margin-line" title="{esc(title)}">'
+            f'<span class="oc-sum-margin-ql">差价</span>'
+            f'<span class="{cls}">{esc(inner)}</span>'
+            f"</div>"
+        )
+
+    diff = _margin_diff_minus(p, u)
     if diff is None:
         inner = "—"
         cls = "oc-sum-margin-val oc-sum-margin-val--empty"
+    elif _margin_diff_is_entirely_negative(diff):
+        pn = _parse_fold_price_normalized_retry(quote_customer)
+        un = _parse_fold_price_normalized_retry(quote_driver)
+        if pn is not None and un is not None:
+            diff2 = _margin_diff_minus(pn, un)
+            if diff2 is not None and not _margin_diff_is_entirely_negative(diff2):
+                inner, cls = _format_fold_margin_inner_and_class(diff2)
+            else:
+                inner = "-"
+                cls = "oc-sum-margin-val oc-sum-margin-val--dash"
+        else:
+            inner = "-"
+            cls = "oc-sum-margin-val oc-sum-margin-val--dash"
     else:
         inner, cls = _format_fold_margin_inner_and_class(diff)
 

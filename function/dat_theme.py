@@ -642,6 +642,7 @@ ORDER_PAGE_CSS = """
       letter-spacing: 0.02em;
     }
     .oc-sum-margin-val--empty { color: var(--dat-muted); font-weight: 600; }
+    .oc-sum-margin-val--dash { color: var(--dat-muted); font-weight: 700; }
     .oc-sum-margin-val--pos { color: #86efac; }
     .oc-sum-margin-val--neg { color: #fca5a5; }
     .oc-sum-margin-val--range-mixed { color: #fde68a; }
