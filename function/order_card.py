@@ -20,9 +20,10 @@ from function.order_view_summary import (
     a_cell_badge_html,
     first_nonempty_str,
     miles_float_for_summary_km,
+    summary_fold_margin_block,
     summary_fold_quote_snippet,
     summary_prefer_db_city_state_zip,
-    summary_total_km_from_miles,
+    summary_fold_distance_mi_display,
 )
 from function.route_metrics import google_maps_directions_url, google_maps_search_url
 
@@ -132,14 +133,21 @@ def render_order_card_html(r: dict[str, Any], *, maps_skill_label: str) -> str:
         except (TypeError, ValueError):
             google_mi_html = "—"
 
-    sum_km_raw = summary_total_km_from_miles(miles_float_for_summary_km(r))
+    mi_fold = miles_float_for_summary_km(r)
+    sum_dist_raw = summary_fold_distance_mi_display(mi_fold)
     sum_km_html = (
-        f'<strong class="oc-sum-km-val">{esc(sum_km_raw)}</strong>'
-        if sum_km_raw != "—"
+        f'<strong class="oc-sum-km-val">{esc(sum_dist_raw)}</strong>'
+        if sum_dist_raw != "—"
         else '<span class="oc-sum-km-empty">—</span>'
     )
     sum_q_cust = summary_fold_quote_snippet(q_cust)
     sum_q_drv = summary_fold_quote_snippet(q_drv)
+    margin_fold_html = summary_fold_margin_block(
+        a_cell=a_cell,
+        quote_customer=q_cust,
+        quote_driver=q_drv,
+        booking_rate=str(r.get("booking_rate") or ""),
+    )
     ft_fold = format_cargo_density_fold(r.get("cargo_density_pcf"))
     sum_ft_html = (
         f'<strong class="oc-sum-ft-val">{esc(ft_fold)}</strong>'
@@ -222,15 +230,16 @@ def render_order_card_html(r: dict[str, Any], *, maps_skill_label: str) -> str:
         <summary class="oc-card__sum">
           <div class="oc-sum-top">
             <span class="oc-sum-no">{ew or "—"}</span>
-            <span class="oc-sum-zips"><span class="oc-zl">起运</span> {o_sum_e} <span class="oc-zsep">→</span> <span class="oc-zl">目的</span> {d_sum_e}</span>
-            <span class="oc-sum-client" title="客户公司（Sheet B 列）"><span class="oc-sum-client-k">客户</span>{co}</span>
+            <span class="oc-sum-zips">{o_sum_e} <span class="oc-zsep">→</span> {d_sum_e}</span>
+            <span class="oc-sum-client" title="客户公司（Sheet B 列）">{co}</span>
           </div>
-          <div class="oc-sum-extra" aria-label="是否安排、总里程、Ft、客户报价、司机价">
-            <span class="oc-sum-arr"><span class="oc-sum-ql">是否安排</span>{a_cell_html}</span>
-            <span class="oc-sum-km" title="由 Google 驾车英里换算"><span class="oc-sum-ql">总里程</span>{sum_km_html}</span>
+          <div class="oc-sum-extra" aria-label="是否安排、总里程、Ft、客户报价、司机价、差价（同一行，窄屏可换行）">
+            <span class="oc-sum-arr">{a_cell_html}</span>
+            <span class="oc-sum-km" title="Google 驾车距离（mi），与下方「里程」一致">{sum_km_html}</span>
             <span class="oc-sum-ft" title="货物密度 lb/ft³（L÷体积 ft³；N 列 m³ 或 M 列长×宽×高）"><span class="oc-sum-ql">Ft</span>{sum_ft_html}</span>
             <span class="oc-sum-p"><span class="oc-sum-ql">客户报价</span>{sum_q_cust}</span>
             <span class="oc-sum-u"><span class="oc-sum-ql">司机价</span>{sum_q_drv}</span>
+            {margin_fold_html}
           </div>
         </summary>
         <div class="oc-card__inner">

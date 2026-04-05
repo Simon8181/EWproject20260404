@@ -619,6 +619,32 @@ ORDER_PAGE_CSS = """
       margin-top: 2px;
       border-top: 1px solid rgba(255, 255, 255, 0.06);
     }
+    .oc-sum-margin-line {
+      display: inline-flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 6px;
+      font-size: 10px;
+      color: #94a3b8;
+      line-height: 1.35;
+      flex: 0 1 auto;
+      margin-left: auto;
+    }
+    .oc-sum-margin-ql {
+      color: var(--dat-muted);
+      font-weight: 600;
+      font-size: 9px;
+      margin-right: 2px;
+    }
+    .oc-sum-margin-val {
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.02em;
+    }
+    .oc-sum-margin-val--empty { color: var(--dat-muted); font-weight: 600; }
+    .oc-sum-margin-val--pos { color: #86efac; }
+    .oc-sum-margin-val--neg { color: #fca5a5; }
+    .oc-sum-margin-val--range-mixed { color: #fde68a; }
     .oc-sum-ql {
       color: var(--dat-muted);
       font-weight: 600;
