@@ -198,7 +198,6 @@ def render_order_page(
     sync_flash_ok: str | None = None,
     maps_flash_err: str | None = None,
     maps_flash_ok: str | None = None,
-    last_synced: str | None = None,
     show_sync_form: bool = False,
     show_maps_enrich_form: bool = False,
     db_fallback_warning: str | None = None,
@@ -343,9 +342,7 @@ def render_order_page(
                     )
                     if db_fallback_warning
                     else (
-                        f'<p class="oc-sync-meta">列表来自数据库 <code>ew_orders</code>（<code>ew_quote_no</code> 主键）'
-                        + (f"；最近同步：{_esc(last_synced)}" if last_synced else "；尚未同步或表为空")
-                        + "</p>"
+                        '<p class="oc-sync-meta">列表来自数据库 <code>ew_orders</code>（<code>ew_quote_no</code> 主键）。</p>'
                     )
                 )
                 + (

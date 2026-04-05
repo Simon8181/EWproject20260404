@@ -65,7 +65,7 @@ from function.order_view import (
 )
 from function.sheet_sync.catalog import list_catalog_read_routes, resolve_rules_for_sheet
 from function.sheet_sync.config import load_mapping
-from function.sheet_sync.db_orders import load_ew_orders_from_db, max_ew_orders_synced_at
+from function.sheet_sync.db_orders import load_ew_orders_from_db
 from function.sheet_sync.render_html import html_document, html_table
 from function.sheet_sync.rows import read_mapped_rows, read_mapped_sections
 from function.sheet_sync.sync import sync_config_to_db
@@ -818,13 +818,6 @@ def read_sheet(
             }
             return JSONResponse(content=body, headers=headers)
 
-        last_synced: str | None = None
-        if not db_fallback_warning:
-            try:
-                last_synced = max_ew_orders_synced_at()
-            except Exception:
-                pass
-
         sync_flash_ok: str | None = None
         if synced == 1:
             sync_flash_ok = (
@@ -901,7 +894,6 @@ def read_sheet(
                 sync_flash_ok=sync_flash_ok,
                 maps_flash_ok=maps_flash_ok,
                 maps_flash_err=maps_flash_err,
-                last_synced=last_synced,
                 show_sync_form=show_sync,
                 show_maps_enrich_form=show_sync,
                 db_fallback_warning=db_fallback_warning,
