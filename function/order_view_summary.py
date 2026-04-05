@@ -138,15 +138,43 @@ def _cell_has_dollar_symbol(text: str) -> bool:
     return "$" in t or "＄" in t or "USD" in t.upper()
 
 
+# ``06856`` 在 float 中会变成 ``6856.0``，与运费 ``250`` 同格时勿当报价。
+_LEADING_ZERO_ZIP5 = re.compile(r"\b(0\d{4})\b")
+
+
+def _floats_matching_leading_zero_zip5(original_text: str) -> set[float]:
+    bad: set[float] = set()
+    for m in _LEADING_ZERO_ZIP5.finditer(str(original_text or "")):
+        try:
+            bad.add(float(m.group(1)))
+        except ValueError:
+            continue
+    return bad
+
+
+def _pick_fallback_scalar_from_numbers(vals: list[float]) -> float | None:
+    """多数字且无 ``$`` 时：略年份；排除邮编噪声后 max；极小+极大再取小者（如 250 与 90210）。"""
+    if not vals:
+        return None
+    if len(vals) == 1:
+        return vals[0]
+    non_year = [v for v in vals if not _looks_like_year(v)]
+    pool = non_year if non_year else vals
+    if len(pool) == 1:
+        return pool[0]
+    lo, hi = min(pool), max(pool)
+    if lo > 0 and hi / lo > 25.0 and lo < 1000.0 and hi > 5000.0:
+        return lo
+    return hi
+
+
 def _parse_fold_price_fallback_number(original_text: str, raw: str | None = None) -> float | None:
-    """算式失败时：优先 ``$`` 后金额；否则取格内数字 max（略 1900–2099 年份）。"""
+    """算式失败时：优先 ``$`` 后金额；否则多数字启发式（略年份、邮编）。"""
     ot = str(original_text or "").strip()
     raw_in = raw if raw is not None else _preprocess_price_cell(ot)
     if not raw_in:
         return None
     dollars = _dollar_amounts_from_text(ot)
-    if dollars:
-        return max(dollars)
     compact = str(raw_in).replace(",", "").replace("$", " ")
     vals: list[float] = []
     for s in re.findall(r"[-+]?\d+(?:\.\d+)?", compact):
@@ -156,12 +184,16 @@ def _parse_fold_price_fallback_number(original_text: str, raw: str | None = None
             continue
         if abs(v) <= 1e12:
             vals.append(v)
-    if not vals:
-        return None
-    if len(vals) == 1:
-        return vals[0]
-    non_year = [v for v in vals if not _looks_like_year(v)]
-    return max(non_year if non_year else vals)
+    zip5_bad = _floats_matching_leading_zero_zip5(ot)
+    if zip5_bad:
+        vals = [v for v in vals if v not in zip5_bad]
+    picked = _pick_fallback_scalar_from_numbers(vals) if vals else None
+    if dollars:
+        dm = max(dollars)
+        if picked is None:
+            return dm
+        return max(dm, picked)
+    return picked
 
 
 _FOLD_FORMULA_TRANS = str.maketrans(
