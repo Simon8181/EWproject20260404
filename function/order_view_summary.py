@@ -8,7 +8,7 @@ import operator
 from typing import Any
 
 from function.address_display import extract_location_display_line
-from function.order_zip import first_us_zip, is_valid_us_zip5, strip_us_zip_plus4_from_text
+from function.order_zip import is_valid_us_zip5, strip_us_zip_plus4_from_text
 from function.order_view_html import esc
 
 
@@ -106,9 +106,24 @@ _DOLLAR_AMOUNTS_RE = re.compile(
     r"\$[\s,]*(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?",
 )
 
+# 两数 ``a-b`` 判为邮编对（非美元区间）的启发式
+_ZIP5_PAIR_LO = 30_000
+_ZIP5_PAIR_HI = 99_999
+_ZIP5_PAIR_MAX_GAP = 4_000
+# 两数相减负值判为「邮编相减」的启发式
+_SUBTRACT_ZIP_LO = 10_000
+_SUBTRACT_ZIP_HI = 99_999
+
+_AST_BINOPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+}
+
 
 def _dollar_amounts_from_text(text: str) -> list[float]:
-    """从原文提取 ``$2,450`` 式金额（避免与地址邮编 30043 等混淆）。"""
+    """从原文提取 ``$2,450`` 式金额（避免与地址邮编等混淆）。"""
     out: list[float] = []
     for m in _DOLLAR_AMOUNTS_RE.finditer(str(text or "")):
         try:
@@ -116,6 +131,11 @@ def _dollar_amounts_from_text(text: str) -> list[float]:
         except ValueError:
             continue
     return out
+
+
+def _cell_has_dollar_symbol(text: str) -> bool:
+    t = str(text or "")
+    return "$" in t or "＄" in t or "USD" in t.upper()
 
 
 def _parse_fold_price_fallback_number(original_text: str, raw: str | None = None) -> float | None:
@@ -201,12 +221,7 @@ _TRAILING_PLUS_NOTES = re.compile(
 
 def _strip_trailing_plus_notes(s: str) -> str:
     """去掉末尾 ``1900+++`` 式备注，保留数字主体。"""
-    t = s
-    while True:
-        nxt = _TRAILING_PLUS_NOTES.sub(r"\1", t)
-        if nxt == t:
-            return t.strip()
-        t = nxt
+    return _TRAILING_PLUS_NOTES.sub(r"\1", s).strip()
 
 
 _TWO_NUM_RANGE = re.compile(
@@ -253,13 +268,7 @@ def _safe_eval_price_ast(node: ast.AST) -> float:
     ):
         left = _safe_eval_price_ast(node.left)
         right = _safe_eval_price_ast(node.right)
-        ops = {
-            ast.Add: operator.add,
-            ast.Sub: operator.sub,
-            ast.Mult: operator.mul,
-            ast.Div: operator.truediv,
-        }
-        fn = ops.get(type(node.op))
+        fn = _AST_BINOPS.get(type(node.op))
         if fn is None:
             raise ValueError
         if isinstance(node.op, ast.Div) and right == 0:
@@ -271,26 +280,19 @@ def _safe_eval_price_ast(node: ast.AST) -> float:
 def _looks_like_zip5_pair_not_dollar_range(
     a: float, b: float, *, original_has_dollar: bool
 ) -> bool:
-    """
-    ``30043-33563`` 常为起终点邮编对，勿当作美元区间。
-    若格内已有 ``$``，仍按价格区间处理（如 ``$30000-$33000``）。
-    """
+    """无 ``$`` 时，两枚五位段且间距较小者视为邮编对，非美元区间。"""
     if original_has_dollar:
         return False
     if abs(a - round(a)) > 1e-6 or abs(b - round(b)) > 1e-6:
         return False
     ia, ib = sorted((int(round(a)), int(round(b))))
-    if ia < 30_000:
+    if ia < _ZIP5_PAIR_LO or ib > _ZIP5_PAIR_HI:
         return False
-    if ib > 99_999:
-        return False
-    if ib - ia > 4_000:
-        return False
-    return True
+    return ib - ia <= _ZIP5_PAIR_MAX_GAP
 
 
 def _looks_like_zip5_minus_zip5_subtraction(normalized: str, v: float) -> bool:
-    """``30043 - 33563`` 被当成减法时得负值，非单价。"""
+    """两枚五位数被 ast 减成负值时，视为邮编相减而非单价。"""
     if v >= 0:
         return False
     t = " ".join(normalized.split())
@@ -298,7 +300,10 @@ def _looks_like_zip5_minus_zip5_subtraction(normalized: str, v: float) -> bool:
     if not m:
         return False
     a, b = int(m.group(1)), int(m.group(2))
-    if a < 10_000 or b < 10_000 or a > 99_999 or b > 99_999:
+    if not (
+        _SUBTRACT_ZIP_LO <= a <= _SUBTRACT_ZIP_HI
+        and _SUBTRACT_ZIP_LO <= b <= _SUBTRACT_ZIP_HI
+    ):
         return False
     return abs(v - (a - b)) < 1e-6
 
@@ -317,9 +322,9 @@ def _try_parse_two_num_range(
     except ValueError:
         return None
     if a <= b:
-        od = str(original_text or "")
-        has_dollar = "$" in od or "＄" in od or "USD" in od.upper()
-        if _looks_like_zip5_pair_not_dollar_range(a, b, original_has_dollar=has_dollar):
+        if _looks_like_zip5_pair_not_dollar_range(
+            a, b, original_has_dollar=_cell_has_dollar_symbol(original_text)
+        ):
             return None
         return (a, b)
     return None
@@ -343,7 +348,6 @@ def parse_fold_price_scalar_or_range(
         v = _safe_eval_price_ast(tree)
         if abs(v) > 1e12:
             return None
-        # ``30043-33563`` 未进区间时会被解析成减法得负数，非单价
         if _looks_like_zip5_minus_zip5_subtraction(normalized, v):
             return None
         return v
@@ -457,14 +461,14 @@ def summary_fold_margin_block(
         if p is not None and u is not None:
             diff = _margin_diff_minus(p, u)
     elif ac == "已经安排":
-        title = "差价 = 司机价(U) − 接单 Rate(W)；区间时显示上下界"
         if u is not None and w is not None:
+            title = "差价 = 司机价(U) − 接单 Rate(W)；区间时显示上下界"
             diff = _margin_diff_minus(u, w)
         elif p is not None and u is not None:
-            title = (
-                "差价 = 客户报价(P) − 司机价(U)；接单 Rate 未解析或格内为邮编等非金额时按此显示"
-            )
+            title = "差价 = 客户报价(P) − 司机价(U)（接单 Rate 未解析或非金额时）"
             diff = _margin_diff_minus(p, u)
+        else:
+            title = "差价 = 司机价(U) − 接单 Rate(W)"
     else:
         return ""
 
