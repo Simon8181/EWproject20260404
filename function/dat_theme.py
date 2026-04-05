@@ -626,6 +626,8 @@ ORDER_PAGE_CSS = """
     }
     .oc-sum-km .oc-sum-km-val { color: #e2e8f0; font-weight: 700; }
     .oc-sum-km-empty { color: var(--dat-muted); }
+    .oc-sum-ft .oc-sum-ft-val { color: #e2e8f0; font-weight: 700; }
+    .oc-sum-ft-empty { color: var(--dat-muted); }
     .oc-sum-p .oc-sum-ql,
     .oc-sum-u .oc-sum-ql { font-size: 9px; text-transform: none; }
     .oc-sum-arr {
@@ -893,6 +895,9 @@ ORDER_PAGE_CSS = """
       letter-spacing: .07em;
       color: #93c5fd;
     }
+    .oc-dims-wrap {
+      margin-bottom: 8px;
+    }
     .oc-dims {
       font-size: 13px;
       font-weight: 500;
@@ -900,7 +905,14 @@ ORDER_PAGE_CSS = """
       color: #f1f5f9;
       white-space: pre-wrap;
       word-break: break-word;
-      margin-bottom: 8px;
+    }
+    .oc-dims-classes {
+      margin-top: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.4;
+      color: #a5f3fc;
+      letter-spacing: 0.01em;
     }
     .oc-sub {
       display: grid;

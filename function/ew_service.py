@@ -154,6 +154,7 @@ def _order_page_redirect(
     preserve_token: str | None = None,
     maps_enriched: int | None = None,
     maps_skipped: int | None = None,
+    maps_cargo_updated: int | None = None,
     maps_err: str | None = None,
 ) -> RedirectResponse:
     """HTML order view; optional token keeps one-click sync / 格式化数据 补全书签。"""
@@ -168,6 +169,8 @@ def _order_page_redirect(
         q.append(f"maps_enriched={int(maps_enriched)}")
     if maps_skipped is not None:
         q.append(f"maps_skipped={int(maps_skipped)}")
+    if maps_cargo_updated is not None:
+        q.append(f"maps_cargo_updated={int(maps_cargo_updated)}")
     if maps_err is not None:
         q.append("maps_err=" + quote(str(maps_err), safe=""))
     if preserve_token:
@@ -659,6 +662,7 @@ def post_order_google_maps(request: Request, token: str = Form("")) -> RedirectR
         return _order_page_redirect(
             maps_enriched=int(stats["enriched"]),
             maps_skipped=int(stats["skipped"]),
+            maps_cargo_updated=int(stats.get("cargo_updated", 0)),
             preserve_token=preserve,
         )
     except Exception as e:
@@ -733,6 +737,10 @@ def read_sheet(
     maps_skipped: int | None = Query(
         None,
         description="订单页：补全时跳过（已完整或无地址）的行数",
+    ),
+    maps_cargo_updated: int | None = Query(
+        None,
+        description="订单页：本次写入货物密度 Ft 与 NMFC Class 的行数",
     ),
     maps_err: str | None = Query(
         None,
@@ -830,18 +838,33 @@ def read_sheet(
         if maps_enriched is not None:
             sk = int(maps_skipped) if maps_skipped is not None else 0
             en = int(maps_enriched)
+            cargo_n = (
+                int(maps_cargo_updated) if maps_cargo_updated is not None else None
+            )
+            cargo_line = ""
+            if cargo_n is not None and cargo_n > 0:
+                cargo_line = (
+                    f"已根据 L/M/N 与重量写入货物密度（Ft）与等级（Class）{cargo_n} 条。"
+                )
             if en == 0 and sk == 0:
                 maps_flash_ok = (
-                    f"{ORDER_FORMAT_DATA_SKILL_LABEL}：无订单行可处理。"
+                    (cargo_line + " " if cargo_line else "")
+                    + f"{ORDER_FORMAT_DATA_SKILL_LABEL}：无订单行可处理。"
                 )
             elif en == 0 and sk > 0:
                 maps_flash_ok = (
-                    f"{ORDER_FORMAT_DATA_SKILL_LABEL}：本次未调用 Google API（{sk} 条已补全或缺起/终点），页面无新数据属正常。"
-                    " 若要强制全表重算，请设 EW_ORDER_MAPS_FORCE_ENRICH=1 并重启服务后再点。"
+                    (cargo_line + " " if cargo_line else "")
+                    + f"{ORDER_FORMAT_DATA_SKILL_LABEL}：本次未调用 Google API（{sk} 条已补全或缺起/终点），页面无新 Maps 数据属正常。"
+                    + (
+                        " 若要强制全表重算，请设 EW_ORDER_MAPS_FORCE_ENRICH=1 并重启服务后再点。"
+                        if not cargo_line
+                        else ""
+                    )
                 )
             else:
                 maps_flash_ok = (
-                    f"{ORDER_FORMAT_DATA_SKILL_LABEL}：已对 {en} 条发起 API 并写库"
+                    (cargo_line + " " if cargo_line else "")
+                    + f"{ORDER_FORMAT_DATA_SKILL_LABEL}：已对 {en} 条发起 API 并写库"
                     + (f"（跳过 {sk} 条：已完整或无起终点）。" if maps_skipped is not None else "。")
                 )
 

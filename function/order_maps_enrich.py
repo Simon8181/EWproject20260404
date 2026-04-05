@@ -17,11 +17,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 import psycopg
+import psycopg.errors
 
 from function.address_display import resolve_origin_for_order
 from function.api_config import google_maps_api_key, reload_api_env
 from function.ew_sort import sort_order_rows_for_display
 from function.maps_distance import RouteInsightResult, fetch_route_insight
+from function.order_cargo_ft import cargo_metrics_payload_from_row
 from function.order_zip import first_us_zip, is_valid_us_zip5, strip_us_zip_plus4_from_text
 from function.route_metrics import google_maps_directions_url, google_maps_search_url
 from function.sheet_sync.config import database_url
@@ -57,6 +59,8 @@ MAPS_ENRICH_DB_COLUMNS: tuple[str, ...] = (
     "consignee_zip",
     "consignee_city",
     "consignee_state",
+    "cargo_density_pcf",
+    "freight_class_nmfc",
 )
 
 
@@ -296,10 +300,12 @@ def _fetch_maps_payload_for_order_row(row: dict[str, Any]) -> dict[str, Any]:
     _, ship_maps_raw = resolve_origin_for_order(row)
     o_full = (ship_maps_raw or "").strip() or str(row.get("ship_from", "") or "").strip()
     if len(o_full) < 2 or len(dest_combined.strip()) < 2:
-        return {
+        p: dict[str, Any] = {
             "maps_enriched_at": now,
             "maps_enrich_error": "missing origin or destination",
         }
+        p.update(cargo_metrics_payload_from_row(row))
+        return p
 
     geo_o = pick_line_for_geocode(ship_maps_raw) or (ship_maps_raw or "").strip()
     geo_d = pick_line_for_geocode(dest_combined) or dest_combined.strip()
@@ -316,6 +322,7 @@ def _fetch_maps_payload_for_order_row(row: dict[str, Any]) -> dict[str, Any]:
         dest_combined=dest_combined,
         now=now,
     )
+    base.update(cargo_metrics_payload_from_row(row))
     return base
 
 
@@ -330,38 +337,81 @@ def _update_ew_order_maps(conn: psycopg.Connection, ew_quote_no: str, payload: d
         cur.execute(sql, values + [ew_quote_no])
 
 
-def batch_enrich_all_ew_orders_maps() -> dict[str, int]:
+def _apply_cargo_metrics_to_all_rows(
+    conn: psycopg.Connection,
+    rows_any: list[dict[str, Any]],
+) -> int:
     """
-    全表排序与订单页一致；对「不完整」行请求 API 并 UPDATE。
-    返回 enriched（实际发起请求并写入）、skipped（已完整或无法解析地址）。
+    先全表写 Ft / Class（不调用 Google，不依赖 Maps 是否已齐）。
+    返回成功写入（至少含密度或等级）的行数。
+    """
+    n = 0
+    for r in rows_any:
+        qn = str(r.get("ew_quote_no") or "").strip()
+        if not qn:
+            continue
+        cargo_payload = cargo_metrics_payload_from_row(r)
+        if not cargo_payload:
+            continue
+        try:
+            _update_ew_order_maps(conn, qn, cargo_payload)
+            conn.commit()
+            n += 1
+        except psycopg.errors.UndefinedColumn as e:
+            conn.rollback()
+            raise RuntimeError(
+                "数据库缺少货物密度/等级列。请执行："
+                "psql \"$DATABASE_URL\" -f db/migration_ew_orders_cargo_density.sql && "
+                "psql \"$DATABASE_URL\" -f db/migration_ew_orders_freight_class.sql"
+            ) from e
+        except Exception:
+            logger.exception("cargo metrics update failed for %s", qn)
+            conn.rollback()
+    return n
+
+
+def batch_enrich_all_ew_orders_maps() -> dict[str, Any]:
+    """
+    全表排序与订单页一致。
+    1) 先写货物 Ft / Class（本地计算，不依赖 Google）。
+    2) 再对需补 Maps 的行请求 API（需 GOOGLE_MAPS_API_KEY）。
+    返回 enriched、skipped、cargo_updated。
     """
     reload_api_env()
-    if not google_maps_api_key():
-        raise RuntimeError("GOOGLE_MAPS_API_KEY missing")
-
     raw = load_ew_orders_from_db()
     rows_any: list[dict[str, Any]] = [dict(r) for r in raw]
     rows_any = sort_order_rows_for_display(rows_any)
 
+    url = database_url()
+    cargo_updated = 0
+    with psycopg.connect(url) as conn:
+        cargo_updated = _apply_cargo_metrics_to_all_rows(conn, rows_any)
+
+    if not google_maps_api_key():
+        return {
+            "enriched": 0,
+            "skipped": len(rows_any),
+            "cargo_updated": cargo_updated,
+        }
+
     enriched = 0
     skipped = 0
     delay = _batch_delay_sec()
-    url = database_url()
 
     with psycopg.connect(url) as conn:
         for r in rows_any:
-            if _maps_row_should_skip_maps_api(r):
-                skipped += 1
-                continue
-            if not _has_origin_dest_for_maps(r):
-                skipped += 1
-                continue
             qn = str(r.get("ew_quote_no") or "").strip()
             if not qn:
                 skipped += 1
                 continue
+            cargo_payload = cargo_metrics_payload_from_row(r)
+            maps_skip = _maps_row_should_skip_maps_api(r) or not _has_origin_dest_for_maps(r)
+            if maps_skip:
+                skipped += 1
+                continue
             try:
                 payload = _fetch_maps_payload_for_order_row(r)
+                payload.update(cargo_payload)
                 _update_ew_order_maps(conn, qn, payload)
                 conn.commit()
                 enriched += 1
@@ -379,7 +429,7 @@ def batch_enrich_all_ew_orders_maps() -> dict[str, int]:
             if delay:
                 time.sleep(delay)
 
-    return {"enriched": enriched, "skipped": skipped}
+    return {"enriched": enriched, "skipped": skipped, "cargo_updated": cargo_updated}
 
 
 def maps_debug_first_row_db_lines(r0: dict[str, Any] | None) -> str:

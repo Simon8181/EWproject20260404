@@ -6,6 +6,7 @@ import html
 from typing import Any
 
 from function.address_display import extract_location_display_line, resolve_origin_for_order
+from function.order_cargo_ft import format_cargo_density_fold, per_pallet_classes_suffix_text
 from function.order_maps_enrich import maps_row_needs_attention
 from function.order_zip import first_us_zip, strip_us_zip_plus4_from_text
 from function.order_view_html import (
@@ -24,6 +25,22 @@ from function.order_view_summary import (
     summary_total_km_from_miles,
 )
 from function.route_metrics import google_maps_directions_url, google_maps_search_url
+
+_DIMS_CLASS_TITLE = "NMFC 密度法估算；正式以 NMFTA/承运人为准"
+
+
+def _dims_section_html(dims: str, row: dict[str, Any]) -> str:
+    """货物/尺寸：尺寸正文 + 每板 Class（若有）。"""
+    body = (
+        block_body(dims) if dims.strip() else '<span class="empty">尺寸（L×W×H 等）—</span>'
+    )
+    cls_note = per_pallet_classes_suffix_text(row)
+    tail = (
+        f'<div class="oc-dims-classes" title="{esc(_DIMS_CLASS_TITLE)}">{esc(cls_note)}</div>'
+        if cls_note
+        else ""
+    )
+    return f'<div class="oc-dims-wrap"><div class="oc-dims">{body}</div>{tail}</div>'
 
 
 def render_order_card_html(r: dict[str, Any], *, maps_skill_label: str) -> str:
@@ -123,6 +140,12 @@ def render_order_card_html(r: dict[str, Any], *, maps_skill_label: str) -> str:
     )
     sum_q_cust = summary_fold_quote_snippet(q_cust)
     sum_q_drv = summary_fold_quote_snippet(q_drv)
+    ft_fold = format_cargo_density_fold(r.get("cargo_density_pcf"))
+    sum_ft_html = (
+        f'<strong class="oc-sum-ft-val">{esc(ft_fold)}</strong>'
+        if ft_fold != "—"
+        else '<span class="oc-sum-ft-empty">—</span>'
+    )
     a_cell_html = a_cell_badge_html(a_cell)
 
     insight_computed = bool(str(r.get("maps_enriched_at") or "").strip())
@@ -202,9 +225,10 @@ def render_order_card_html(r: dict[str, Any], *, maps_skill_label: str) -> str:
             <span class="oc-sum-zips"><span class="oc-zl">起运</span> {o_sum_e} <span class="oc-zsep">→</span> <span class="oc-zl">目的</span> {d_sum_e}</span>
             <span class="oc-sum-client" title="客户公司（Sheet B 列）"><span class="oc-sum-client-k">客户</span>{co}</span>
           </div>
-          <div class="oc-sum-extra" aria-label="是否安排、总里程、客户报价、司机价">
+          <div class="oc-sum-extra" aria-label="是否安排、总里程、Ft、客户报价、司机价">
             <span class="oc-sum-arr"><span class="oc-sum-ql">是否安排</span>{a_cell_html}</span>
             <span class="oc-sum-km" title="由 Google 驾车英里换算"><span class="oc-sum-ql">总里程</span>{sum_km_html}</span>
+            <span class="oc-sum-ft" title="货物密度 lb/ft³（L÷体积 ft³；N 列 m³ 或 M 列长×宽×高）"><span class="oc-sum-ql">Ft</span>{sum_ft_html}</span>
             <span class="oc-sum-p"><span class="oc-sum-ql">客户报价</span>{sum_q_cust}</span>
             <span class="oc-sum-u"><span class="oc-sum-ql">司机价</span>{sum_q_drv}</span>
           </div>
@@ -250,7 +274,7 @@ def render_order_card_html(r: dict[str, Any], *, maps_skill_label: str) -> str:
       {booking_sec}
       <section class="oc-load" aria-label="货物与尺寸">
         <h3>货物 / 尺寸</h3>
-        <div class="oc-dims">{block_body(dims) if dims.strip() else '<span class="empty">尺寸（L×W×H 等）—</span>'}</div>
+        {_dims_section_html(dims, r)}
         <div class="oc-sub">
           <div class="oc-chip"><span class="k">品名</span><span class="v">{block_body(goods) if goods.strip() else "—"}</span></div>
           <div class="oc-chip"><span class="k">货值</span><span class="v">{block_body(cargo_val) if cargo_val.strip() else "—"}</span></div>
