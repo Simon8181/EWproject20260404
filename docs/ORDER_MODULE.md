@@ -6,6 +6,7 @@
 
 - **数据源**：`EW_CATALOG.yaml` 路由 `/f/read/order` → `ew_quote_working` → `function/sheet_sync/rules/EW_ORDER_RULES.yaml`（Google Sheet「下单 BOL need booking」tab）。
 - **HTTP**：`function/ew_service.py` 中当 `name == "order"` 且 `fmt=html` 时，不使用通用表格页，而走专用 **`function/order_view.py`**。
+- **分页**：`?page=1&per_page=20`（默认每页 20）；旧参数 `limit` 仍可作为每页条数。HTML 底栏可点 **每页 10 / 20 / 50 / 100**（切换后回到第 1 页）。JSON 返回 `{ items, total, page, per_page, total_pages }`。
 
 ## 已实现
 
@@ -37,6 +38,15 @@
 ### 数据库
 
 - **`db/schema_order.sql`**：主表 **`ew_orders`**（与 `EW_ORDER_RULES.yaml` 的 `postgres.table` 一致），`order_fee_addons` 按 `ew_quote_no` 关联。旧名 `ltl_working_quotes` 见 `db/schema_ltl_working.sql` 中的迁移说明。
+
+### 格式化数据（规范化邮编）批量补全（非 Sheet 同步）
+
+- **不在「从 Sheet 刷新」时调用 Maps**。Sheet 同步只写表内列 + 邮编解析（`ship_from_zip` / `consignee_zip`）。
+- **触发**：订单页开发者技能 **「格式化数据（规范化邮编）」**（原 Google Map）→ `POST /f/read/order/google-maps`，逻辑在 **`function/order_maps_enrich.py`** 的 **`batch_enrich_all_ew_orders_maps`**：对 `ew_orders` **全表**排序与列表一致，逐条若缺距离 / Geocode types / 三向地图链接则调 **`fetch_route_insight`** 并 **UPDATE**（含邮编规范化写入 `ship_from_zip` / `consignee_zip`）。
+- **规则**：起运 **`resolve_origin_for_order`**；Geocode 候选 **`pick_line_for_geocode`**；与 **`/api/route`** 同源。
+- **落库**：距离、formatted 地址、types、Land use、跳转链接；并 **回写** 与 Sheet 对齐的四列：**`ship_from`**、**`ship_from_zip`**、**`consignee_address`**、**`consignee_zip`**（Google Geocoding 标准地址 + `postal_code` / 文本解析邮编）。下次「从 Sheet 刷新」会按 Sheet 再次覆盖。
+- **页面**：**`order_view.py`** 仅读库展示，不发起在线 Maps；缺项订单 **`maps_row_needs_attention`** 时整卡高亮并显示「待解决」横幅。
+- **环境**：`GOOGLE_MAPS_API_KEY`；`EW_ORDER_MAPS_BATCH_DELAY_MS` 可选节流。
 
 ### 其它页面
 

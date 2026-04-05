@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import ssl
 import urllib.error
 import urllib.parse
@@ -33,6 +34,7 @@ from dataclasses import dataclass
 import certifi
 
 from function.api_config import maps_api_key
+from function.order_zip import first_us_zip
 
 _DISTANCE_MATRIX_URL = "https://maps.googleapis.com/maps/api/distancematrix/json"
 _GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
@@ -229,6 +231,99 @@ class GeocodeDetailResult:
     """Place Details 返回的 types（仅当 ORDER_PLACES_LAND_USE=1 且请求成功）。"""
     land_use: str | None = None
     """当 ok=True 时为 warehouse / commercial / residential / unknown 之一。"""
+    postal_code: str | None = None
+    """美国邮编 **5 位**，来自 `address_components` 或从 formatted 解析（忽略 +4）。"""
+    locality: str | None = None
+    """城市（locality / sublocality 等）。"""
+    state_code: str | None = None
+    """州/省缩写（美国常见 2 字母）。"""
+
+
+def _postal_long_from_geocode_components(r0: dict) -> str:
+    """美国邮编 5 位：只取 `postal_code` 组件（忽略 `postal_code_suffix` / +4）。"""
+    ac = r0.get("address_components")
+    if not isinstance(ac, list):
+        return ""
+    base = ""
+    for comp in ac:
+        if not isinstance(comp, dict):
+            continue
+        types = comp.get("types") or []
+        if not isinstance(types, list):
+            continue
+        name = str(comp.get("long_name") or comp.get("short_name") or "").strip()
+        if "postal_code" in types:
+            base = name
+    return base
+
+
+def _city_state_from_geocode_components(r0: dict) -> tuple[str, str]:
+    """
+    从 Geocoding address_components 取城市与州/省缩写。
+    美国：`administrative_area_level_1` 的 short_name 常为 2 字母；城市优先 locality，其次 sublocality/neighborhood。
+    """
+    ac = r0.get("address_components")
+    if not isinstance(ac, list):
+        return "", ""
+    state = ""
+    for comp in ac:
+        if not isinstance(comp, dict):
+            continue
+        types = comp.get("types") or []
+        if not isinstance(types, list):
+            continue
+        if "administrative_area_level_1" not in types:
+            continue
+        sn = str(comp.get("short_name") or "").strip()
+        ln = str(comp.get("long_name") or "").strip()
+        if len(sn) == 2 and sn.isalpha():
+            state = sn.upper()
+        elif ln:
+            state = ln[:2].upper() if len(ln) >= 2 else ""
+        break
+    city = ""
+    for key in (
+        "locality",
+        "sublocality",
+        "sublocality_level_1",
+        "neighborhood",
+        "administrative_area_level_3",
+    ):
+        for comp in ac:
+            if not isinstance(comp, dict):
+                continue
+            types = comp.get("types") or []
+            if not isinstance(types, list):
+                continue
+            if key not in types:
+                continue
+            ln = str(comp.get("long_name") or "").strip()
+            if ln:
+                city = ln
+                break
+        if city:
+            break
+    return city, state
+
+
+def _fallback_city_state_from_formatted_us(fmt: str) -> tuple[str, str]:
+    """
+    Geocoding 的 locality 偶发为空时，从标准地址尾部解析 `..., City, ST 12345`（含 ZIP+4）。
+    """
+    t = (fmt or "").strip()
+    if not t:
+        return "", ""
+    t = re.sub(r",\s*(USA|United States)\s*$", "", t, flags=re.IGNORECASE).strip()
+    m = re.search(
+        r",\s*([^,]+)\s*,\s*([A-Za-z]{2})\s*(\d{5})(?:-\d{4})?\s*$",
+        t,
+    )
+    if not m:
+        return "", ""
+    city, st = m.group(1).strip(), m.group(2).upper()
+    if len(st) == 2 and city:
+        return city, st
+    return "", ""
 
 
 def land_use_for_geocode_side(g: GeocodeDetailResult) -> str:
@@ -261,6 +356,12 @@ class RouteInsightResult:
     destination_geocode_status: str
     origin_land_use: str | None = None  # warehouse|commercial|residential|unknown when set
     destination_land_use: str | None = None
+    origin_postal_code: str | None = None
+    destination_postal_code: str | None = None
+    origin_city: str | None = None
+    origin_state: str | None = None
+    destination_city: str | None = None
+    destination_state: str | None = None
     error_message: str | None = None
 
 
@@ -498,6 +599,17 @@ def fetch_geocode_detail(address: str) -> GeocodeDetailResult:
     merged_types = tuple(types_t) + place_types_t
     land_use_v = classify_land_use(merged_types)
 
+    raw_pc = _postal_long_from_geocode_components(r0)
+    pc_norm = first_us_zip(raw_pc) if raw_pc else first_us_zip(fmt)
+    pc_out = pc_norm if pc_norm else None
+    city_v, state_v = _city_state_from_geocode_components(r0)
+    if not city_v or not state_v:
+        fc, fs = _fallback_city_state_from_formatted_us(fmt)
+        if fc and not city_v:
+            city_v = fc
+        if fs and not state_v:
+            state_v = fs
+
     return GeocodeDetailResult(
         ok=True,
         types=types_t,
@@ -510,6 +622,9 @@ def fetch_geocode_detail(address: str) -> GeocodeDetailResult:
         place_id=place_id,
         place_types=place_types_t,
         land_use=land_use_v,
+        postal_code=pc_out,
+        locality=city_v or None,
+        state_code=state_v or None,
     )
 
 
@@ -544,6 +659,9 @@ def _geocode_first_ok(variants: list[str]) -> GeocodeDetailResult:
         formatted_address="",
         google_status="NO_VARIANTS",
         error_message="no address variants",
+        postal_code=None,
+        locality=None,
+        state_code=None,
     )
 
 
@@ -595,6 +713,21 @@ def fetch_route_insight(
     if not gd.ok and gd.error_message:
         err_parts.append(f"destination geocode: {gd.error_message}")
 
+    o_zip: str | None = None
+    o_city: str | None = None
+    o_st: str | None = None
+    if go.ok:
+        o_zip = go.postal_code or first_us_zip(go.formatted_address) or None
+        o_city = go.locality
+        o_st = go.state_code
+    d_zip: str | None = None
+    d_city: str | None = None
+    d_st: str | None = None
+    if gd.ok:
+        d_zip = gd.postal_code or first_us_zip(gd.formatted_address) or None
+        d_city = gd.locality
+        d_st = gd.state_code
+
     return RouteInsightResult(
         ok=ok,
         distance_miles=dr.distance_miles,
@@ -614,5 +747,11 @@ def fetch_route_insight(
         destination_geocode_status=gd.google_status,
         origin_land_use=land_use_for_geocode_side(go),
         destination_land_use=land_use_for_geocode_side(gd),
+        origin_postal_code=o_zip,
+        destination_postal_code=d_zip,
+        origin_city=o_city,
+        origin_state=o_st,
+        destination_city=d_city,
+        destination_state=d_st,
         error_message="; ".join(err_parts) if err_parts and not ok else (None if ok else "; ".join(err_parts)),
     )

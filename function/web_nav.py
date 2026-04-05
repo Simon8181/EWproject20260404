@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import html
 from typing import Literal
-from urllib.parse import quote
 
 from function.auth_roles import can_manage_users, can_view_config, can_view_integration
 
@@ -19,6 +18,10 @@ def render_sidebar_nav(
     session_user: str | None = None,
     role: str | None = None,
 ) -> str:
+    # 仅已登录（有会话展示名）时渲染侧栏；未登录页面只显示主内容区
+    if not (session_user or "").strip():
+        return ""
+
     def link(href: str, label: str, key: NavActive) -> str:
         cls = "ew-nav-link"
         if active == key:
@@ -39,18 +42,9 @@ def render_sidebar_nav(
 
     nav_inner = "\n".join(parts)
 
-    login_href = "/login?next=" + quote("/f/read/order?fmt=html", safe="")
-    register_href = "/register?next=" + quote("/f/read/order?fmt=html", safe="")
     auth_html = (
         f'<div class="ew-nav-auth"><span class="ew-nav-user">{html.escape(session_user)}</span>'
         f'<a class="ew-nav-link ew-nav-link--sub" href="/logout">退出</a></div>'
-        if session_user
-        else (
-            f'<div class="ew-nav-auth ew-nav-auth--row">'
-            f'<a class="ew-nav-link ew-nav-link--sub" href="{login_href}">登录</a>'
-            f'<a class="ew-nav-link ew-nav-link--sub" href="{register_href}">注册</a>'
-            f"</div>"
-        )
     )
     return f"""
     <aside class="ew-nav" aria-label="主导航">

@@ -5,10 +5,10 @@ EW HTTP 服务：浏览器访问与 `EW_CATALOG.yaml` 中 `/F/read/...` 路由�
   uvicorn function.ew_service:app --host 127.0.0.1 --port 8000
 
 示例：
-  http://127.0.0.1:8000/  — 主页（目录导航）
-  http://127.0.0.1:8000/f/read/quote?fmt=html&limit=50
-  http://127.0.0.1:8000/F/read/order?fmt=json  — 列表来自 Postgres `ew_orders`；POST /f/read/order/sync 从 Sheet 刷新
-  http://127.0.0.1:8000/f/read/order?fmt=html&token=EW_ADMIN_TOKEN  — 可选书签（与 /admin 同令牌）；或 /login 登录后同按钮
+  http://127.0.0.1:8000/  — 主页（需登录；未登录会跳转 /login）
+  http://127.0.0.1:8000/f/read/quote?fmt=html&limit=50  — 需登录，或 ?token=EW_ADMIN_TOKEN
+  http://127.0.0.1:8000/F/read/order?fmt=json  — 同上；分页 `page`（默认 1）、`per_page`（默认 20）；`limit` 兼容作每页条数
+  http://127.0.0.1:8000/f/read/order?fmt=html&token=EW_ADMIN_TOKEN  — 书签（与 /admin 同令牌）；或先 /login 再打开
   http://127.0.0.1:8000/login  — 用户名/密码（config/ew_users.yaml），角色：开发者 / Boss / Broker
   http://127.0.0.1:8000/register  — 自助注册（首个账号=开发者；或 EW_SELF_REGISTER=1）
   http://127.0.0.1:8000/users  — 用户管理（仅开发者）
@@ -23,7 +23,7 @@ from __future__ import annotations
 import html as html_module
 import os
 
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote, urlencode
 
 from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -33,7 +33,7 @@ from function.admin_api_status import (
     render_admin_page,
     verify_admin_token,
 )
-from function.api_config import integration_snapshot, save_order_google_miles_max_ui
+from function.api_config import integration_snapshot, reload_api_env, save_order_google_miles_max_ui
 from function.auth_roles import (
     can_edit_config,
     can_manage_users,
@@ -56,7 +56,13 @@ from function.ew_sort import sort_order_rows_for_display
 from function.home_page import render_home_page
 from function.login_page import render_login_page
 from function.maps_distance import fetch_driving_distance, fetch_route_insight
-from function.order_view import render_order_page
+from function.order_maps_enrich import batch_enrich_all_ew_orders_maps
+from function.order_view import (
+    ORDER_FORMAT_DATA_SKILL_LABEL,
+    render_order_page,
+    render_order_pagination_nav,
+    render_peidan_page,
+)
 from function.sheet_sync.catalog import list_catalog_read_routes, resolve_rules_for_sheet
 from function.sheet_sync.config import load_mapping
 from function.sheet_sync.db_orders import load_ew_orders_from_db, max_ew_orders_synced_at
@@ -84,6 +90,35 @@ from function.users_page import render_users_page
 app = FastAPI(title="EW Sheet Service", version="1.0.0")
 
 
+def _query_token_ok(request: Request) -> bool:
+    """URL ?token= 与 EW_ADMIN_TOKEN 一致（/admin 书签、与 /f/read 内逻辑一致）。"""
+    t = (request.query_params.get("token") or "").strip()
+    return bool(admin_token_configured() and t and verify_admin_token(t))
+
+
+@app.middleware("http")
+async def require_login_middleware(request: Request, call_next):
+    """未登录仅允许：/health、登录注册退出、/f/read/*（内含会话或 token 校验）、/admin*?token=。"""
+    path = request.url.path
+    if path == "/health":
+        return await call_next(request)
+    if path in ("/login", "/register", "/logout"):
+        return await call_next(request)
+    if path.lower().startswith("/f/read/"):
+        return await call_next(request)
+    if path.startswith("/admin") and _query_token_ok(request):
+        return await call_next(request)
+    if read_session(request):
+        return await call_next(request)
+    if path.lower().startswith("/api/"):
+        return JSONResponse(status_code=401, content={"detail": "需要登录"})
+    next_q = path + (("?" + request.url.query) if request.url.query else "")
+    return RedirectResponse(
+        url="/login?next=" + quote(next_q, safe=""),
+        status_code=303,
+    )
+
+
 def _session_nav(request: Request) -> tuple[str | None, str | None]:
     s = read_session(request)
     if not s:
@@ -92,14 +127,36 @@ def _session_nav(request: Request) -> tuple[str | None, str | None]:
     return cap, s["role"]
 
 
+def _authorized_for_read_data(request: Request, token: str | None) -> bool:
+    """已登录会话，或 ?token= 与 EW_ADMIN_TOKEN 一致（书签/脚本）。"""
+    if read_session(request):
+        return True
+    t = (token or "").strip()
+    return bool(admin_token_configured() and t and verify_admin_token(t))
+
+
+def _login_next_path_strip_token(request: Request) -> str:
+    """用于 /login?next=，去掉 token 避免把管理令牌写进登录页 URL。"""
+    path = request.url.path
+    q = [
+        (k, v)
+        for k, v in parse_qsl(request.url.query, keep_blank_values=True)
+        if k.casefold() != "token"
+    ]
+    return path + ("?" + urlencode(q) if q else "")
+
+
 def _order_page_redirect(
     *,
     sync_err: str | None = None,
     synced: int | None = None,
     n: int | None = None,
     preserve_token: str | None = None,
+    maps_enriched: int | None = None,
+    maps_skipped: int | None = None,
+    maps_err: str | None = None,
 ) -> RedirectResponse:
-    """HTML order view; optional token keeps one-click sync after POST /f/read/order/sync."""
+    """HTML order view; optional token keeps one-click sync / 格式化数据 补全书签。"""
     q: list[str] = ["fmt=html"]
     if sync_err is not None:
         q.append("sync_err=" + quote(str(sync_err), safe=""))
@@ -107,9 +164,23 @@ def _order_page_redirect(
         q.append(f"synced={int(synced)}")
     if n is not None:
         q.append(f"n={int(n)}")
+    if maps_enriched is not None:
+        q.append(f"maps_enriched={int(maps_enriched)}")
+    if maps_skipped is not None:
+        q.append(f"maps_skipped={int(maps_skipped)}")
+    if maps_err is not None:
+        q.append("maps_err=" + quote(str(maps_err), safe=""))
     if preserve_token:
         q.append("token=" + quote(preserve_token, safe=""))
     return RedirectResponse(url="/f/read/order?" + "&".join(q), status_code=303)
+
+
+def _flat_query_params(request: Request) -> dict[str, str]:
+    """Single-value map of current query string (last wins on duplicates)."""
+    out: dict[str, str] = {}
+    for k, v in request.query_params.multi_items():
+        out[k] = v
+    return out
 
 
 @app.get("/", response_model=None)
@@ -181,6 +252,12 @@ def api_route_insight(
         "destination_land_use": r.destination_land_use,
         "origin_formatted_address": r.origin_formatted,
         "destination_formatted_address": r.destination_formatted,
+        "origin_postal_code": r.origin_postal_code,
+        "destination_postal_code": r.destination_postal_code,
+        "origin_city": r.origin_city,
+        "origin_state": r.origin_state,
+        "destination_city": r.destination_city,
+        "destination_state": r.destination_state,
         "google_distance_status": r.google_distance_status,
         "element_status": r.element_status,
         "origin_geocode_status": r.origin_geocode_status,
@@ -334,6 +411,7 @@ def register_get(
     next: str = Query("/f/read/order?fmt=html", description="注册成功后跳转"),
     err: str | None = Query(None, description="错误信息"),
 ) -> Response:
+    reload_api_env()
     if read_session(request):
         return RedirectResponse(safe_next_path(next), status_code=303)
     np = safe_next_path(next)
@@ -343,8 +421,8 @@ def register_get(
     closed_message: str | None = None
     if not allowed:
         closed_message = (
-            "已有账号且未开启自助注册。请在 config/api.secrets.env 设置 EW_SELF_REGISTER=1，"
-            "或由开发者登录后在「用户」中添加账号。"
+            "已有账号且未开启自助注册。请在仓库根目录 .env 或 config/api.secrets.env 中设置 "
+            "EW_SELF_REGISTER=1，保存后重启 uvicorn；或由开发者登录后在「用户」中添加账号。"
         )
     return HTMLResponse(
         content=render_register_page(
@@ -354,6 +432,7 @@ def register_get(
             signing_ok=signing_ok,
             show_code_field=show_code,
             closed_message=closed_message,
+            first_user=user_count() == 0,
         )
     )
 
@@ -366,7 +445,9 @@ def register_post(
     password2: str = Form(""),
     next: str = Form("/f/read/order?fmt=html"),
     registration_code: str = Form(""),
+    role: str = Form(""),
 ) -> RedirectResponse:
+    reload_api_env()
     np = safe_next_path(next)
     if read_session(request):
         return RedirectResponse(np, status_code=303)
@@ -391,14 +472,18 @@ def register_post(
             status_code=303,
         )
     try:
-        role = register_new_user((username or "").strip(), password)
+        assigned = register_new_user(
+            (username or "").strip(),
+            password,
+            requested_role=(role or "").strip() or None,
+        )
     except ValueError as e:
         return RedirectResponse(
             "/register?err=" + quote(str(e)) + "&next=" + quote(np, safe=""),
             status_code=303,
         )
     un = (username or "").strip()
-    val = issue_session_value(un, role)
+    val = issue_session_value(un, assigned)
     if not val:
         return RedirectResponse(
             "/register?err=" + quote("无法签发会话") + "&next=" + quote(np, safe=""),
@@ -538,7 +623,7 @@ def admin_api_status_json(
 @app.post("/F/read/order/sync", response_model=None)
 @app.post("/f/read/order/sync", response_model=None)
 def post_order_sheet_sync(request: Request, token: str = Form("")) -> RedirectResponse:
-    """从 Google Sheet 同步至 `ew_quote_no`。URL 令牌或任意已登录角色（developer/boss/broker）。"""
+    """从 Google Sheet 同步至 `ew_quote_no`。需 EW_ADMIN_TOKEN 或已登录为 developer（Boss/Broker 会话不可）。"""
     t = (token or "").strip()
     tok_ok = bool(admin_token_configured() and t and verify_admin_token(t))
     s = read_session(request)
@@ -558,6 +643,56 @@ def post_order_sheet_sync(request: Request, token: str = Form("")) -> RedirectRe
         return _order_page_redirect(sync_err=str(e), preserve_token=preserve)
 
 
+@app.post("/F/read/order/google-maps", response_model=None)
+@app.post("/f/read/order/google-maps", response_model=None)
+def post_order_google_maps(request: Request, token: str = Form("")) -> RedirectResponse:
+    """对 `ew_orders` 全表补全（格式化数据）：规范化邮编、驾车距离、地址类型、标准地址与地图链接；权限同 Sheet 同步。"""
+    t = (token or "").strip()
+    tok_ok = bool(admin_token_configured() and t and verify_admin_token(t))
+    s = read_session(request)
+    sess_ok = bool(s and can_sync_orders(s["role"]))
+    if not (tok_ok or sess_ok):
+        return _order_page_redirect(maps_err="请先登录，或在表单中提供有效 EW_ADMIN_TOKEN")
+    preserve = t if tok_ok else None
+    try:
+        stats = batch_enrich_all_ew_orders_maps()
+        return _order_page_redirect(
+            maps_enriched=int(stats["enriched"]),
+            maps_skipped=int(stats["skipped"]),
+            preserve_token=preserve,
+        )
+    except Exception as e:
+        return _order_page_redirect(maps_err=str(e), preserve_token=preserve)
+
+
+@app.get("/F/read/order/peidan", response_model=None)
+@app.get("/f/read/order/peidan", response_model=None)
+def read_order_peidan(
+    request: Request,
+    admin_bookmark_token: str | None = Query(
+        None,
+        alias="token",
+        description="与下单页相同：EW_ADMIN_TOKEN 书签",
+    ),
+) -> Response:
+    """配单技能页：与 /f/read/order 相同鉴权（会话或 ?token=）。"""
+    query_token = (admin_bookmark_token or "").strip()
+    if not _authorized_for_read_data(request, query_token):
+        return RedirectResponse(
+            url="/login?next=" + quote(_login_next_path_strip_token(request), safe=""),
+            status_code=303,
+        )
+    cap, nav_role = _session_nav(request)
+    tok_ok = bool(admin_token_configured() and query_token and verify_admin_token(query_token))
+    return HTMLResponse(
+        content=render_peidan_page(
+            session_user=cap,
+            role=nav_role,
+            back_token=query_token if tok_ok else None,
+        )
+    )
+
+
 @app.get("/F/read/{name}", response_model=None)
 @app.get("/f/read/{name}", response_model=None)
 def read_sheet(
@@ -570,8 +705,10 @@ def read_sheet(
     limit: int | None = Query(
         None,
         ge=1,
-        description="最多返回行数；省略则返回全部（大表慎用）",
+        description="非 order：最多返回行数。order：兼容旧参数，作为每页条数（等同 per_page）",
     ),
+    page: int = Query(1, ge=1, description="order：页码，从 1 起"),
+    per_page: int = Query(20, ge=1, le=200, description="order：每页条数，默认 20"),
     debug_maps: bool = Query(
         False,
         description="订单 HTML：显示 Maps（距离/地址类型）调用条件与首行 API 状态",
@@ -588,6 +725,18 @@ def read_sheet(
         None,
         alias="n",
         description="订单页：最近一次同步 upsert 行数",
+    ),
+    maps_enriched: int | None = Query(
+        None,
+        description="订单页：格式化数据（规范化邮编等）补全发起请求的行数",
+    ),
+    maps_skipped: int | None = Query(
+        None,
+        description="订单页：补全时跳过（已完整或无地址）的行数",
+    ),
+    maps_err: str | None = Query(
+        None,
+        description="订单页：格式化数据补全错误",
     ),
     admin_bookmark_token: str | None = Query(
         None,
@@ -615,6 +764,18 @@ def read_sheet(
             detail="fmt must be json or html",
         )
 
+    query_token = (admin_bookmark_token or "").strip()
+    if not _authorized_for_read_data(request, query_token):
+        if media == "json":
+            raise HTTPException(
+                status_code=401,
+                detail="需要登录（Cookie）或在 URL 中提供 ?token=（与 EW_ADMIN_TOKEN 一致）",
+            )
+        return RedirectResponse(
+            url="/login?next=" + quote(_login_next_path_strip_token(request), safe=""),
+            status_code=303,
+        )
+
     if name.casefold() == "order":
         db_fallback_warning: str | None = None
         try:
@@ -628,15 +789,26 @@ def read_sheet(
             db_rows = read_mapped_rows(cfg, None)
 
         rows = sort_order_rows_for_display(db_rows)
-        if limit is not None:
-            rows = rows[:limit]
+        total = len(rows)
+        eff_per = min(int(limit), 200) if limit is not None else per_page
+        total_pages = max(1, (total + eff_per - 1) // eff_per) if total else 1
+        page_i = min(max(1, page), total_pages)
+        start = (page_i - 1) * eff_per
+        rows_page = rows[start : start + eff_per]
 
         if media == "json":
             headers: dict[str, str] = {}
             if db_fallback_warning:
                 headers["X-EW-Order-Source"] = "sheet-fallback"
                 headers["X-EW-Order-Warning"] = db_fallback_warning[:800]
-            return JSONResponse(content=rows, headers=headers)
+            body: dict[str, object] = {
+                "items": rows_page,
+                "total": total,
+                "page": page_i,
+                "per_page": eff_per,
+                "total_pages": total_pages,
+            }
+            return JSONResponse(content=body, headers=headers)
 
         last_synced: str | None = None
         if not db_fallback_warning:
@@ -653,7 +825,27 @@ def read_sheet(
                 else "已从 Google Sheet 同步至数据库。"
             )
 
-        tok = (admin_bookmark_token or "").strip()
+        maps_flash_ok: str | None = None
+        maps_flash_err: str | None = maps_err
+        if maps_enriched is not None:
+            sk = int(maps_skipped) if maps_skipped is not None else 0
+            en = int(maps_enriched)
+            if en == 0 and sk == 0:
+                maps_flash_ok = (
+                    f"{ORDER_FORMAT_DATA_SKILL_LABEL}：无订单行可处理。"
+                )
+            elif en == 0 and sk > 0:
+                maps_flash_ok = (
+                    f"{ORDER_FORMAT_DATA_SKILL_LABEL}：本次未调用 Google API（{sk} 条已补全或缺起/终点），页面无新数据属正常。"
+                    " 若要强制全表重算，请设 EW_ORDER_MAPS_FORCE_ENRICH=1 并重启服务后再点。"
+                )
+            else:
+                maps_flash_ok = (
+                    f"{ORDER_FORMAT_DATA_SKILL_LABEL}：已对 {en} 条发起 API 并写库"
+                    + (f"（跳过 {sk} 条：已完整或无起终点）。" if maps_skipped is not None else "。")
+                )
+
+        tok = query_token
         tok_ok = bool(admin_token_configured() and tok and verify_admin_token(tok))
         s = read_session(request)
         role = s["role"] if s else None
@@ -669,19 +861,32 @@ def read_sheet(
         )
         cap, nav_role = _session_nav(request)
 
+        pg_html = ""
+        if total > 0:
+            pg_html = render_order_pagination_nav(
+                page=page_i,
+                per_page=eff_per,
+                total=total,
+                preserved_query=_flat_query_params(request),
+            )
+
         return HTMLResponse(
             content=render_order_page(
-                rows,
+                rows_page,
                 debug_maps=debug_maps,
                 sync_flash_err=sync_err,
                 sync_flash_ok=sync_flash_ok,
+                maps_flash_ok=maps_flash_ok,
+                maps_flash_err=maps_flash_err,
                 last_synced=last_synced,
                 show_sync_form=show_sync,
+                show_maps_enrich_form=show_sync,
                 db_fallback_warning=db_fallback_warning,
                 order_sync_prefilled_token=tok if tok_ok else None,
                 order_sync_via_session=order_sync_via_session,
                 session_user=cap,
                 role=nav_role,
+                pagination_html=pg_html,
             )
         )
 

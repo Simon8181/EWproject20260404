@@ -14,6 +14,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from function.order_zip import first_us_zip
+
 # --- shared US fragments ---
 _ZIP = r"\d{5}(?:-\d{4})?"
 _ST = r"[A-Z]{2}"
@@ -61,7 +63,10 @@ _STREET_TYPE = frozenset(
 
 def _normalize_display(city: str, st: str, zipc: str) -> str:
     c = (city or "").strip().strip(",")
-    z = (zipc or "").strip()
+    raw_z = (zipc or "").strip()
+    z = first_us_zip(raw_z) if raw_z else ""
+    if not z:
+        z = raw_z
     s = (st or "").strip().upper()
     if not c:
         return ""
@@ -158,7 +163,10 @@ def _cn_city_zip(t: str) -> str:
     mz = _CN_ZIP.search(t)
     mr = re.search(r"区域\s*[：:]\s*([A-Za-z]{2})\b", t)
     city = mc.group(1).strip() if mc else ""
-    z = mz.group(1).strip() if mz else ""
+    z_raw = mz.group(1).strip() if mz else ""
+    z = first_us_zip(z_raw) if z_raw else ""
+    if not z:
+        z = z_raw
     st = mr.group(1).upper() if mr else ""
     if city and z and st and len(st) == 2:
         return f"{city}, {st} {z}"

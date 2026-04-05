@@ -56,15 +56,25 @@ def user_exists(username: str) -> bool:
     return username.strip() in users
 
 
-def register_new_user(username: str, password: str) -> str:
-    """Create account; first user → developer, else broker. Returns role."""
+def register_new_user(username: str, password: str, *, requested_role: str | None = None) -> str:
+    """Create account. First user → must be developer. Later self-register → boss or broker only."""
     un = username.strip()
     if not un or len(un) > 64:
         raise ValueError("无效用户名")
     if user_exists(un):
         raise ValueError("用户名已被占用")
     n = user_count()
-    role = "developer" if n == 0 else "broker"
+    req = normalize_role(requested_role)
+    if n == 0:
+        if req and req != "developer":
+            raise ValueError("首个账号必须为开发者")
+        role = "developer"
+    else:
+        if not req or req == "developer":
+            raise ValueError("自助注册请选择 Boss 或 Broker（开发者须由管理员添加）")
+        if req not in ("boss", "broker"):
+            raise ValueError("无效角色")
+        role = req
     set_password(un, password, role)
     return role
 

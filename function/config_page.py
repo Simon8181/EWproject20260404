@@ -117,6 +117,7 @@ def render_config_page(
       <div class="cfg-kv-row"><span class="cfg-k">config/ew_settings.env</span><span class="cfg-v">{_yes_no(bool(cfg["ew_settings_env_exists"]))}（网页保存项）</span></div>
       <div class="cfg-kv-row"><span class="cfg-k">ORDER_GOOGLE_MILES_MAX</span><span class="cfg-v"><code>{miles_val}</code>（当前生效；下单页每行前 N 条调 Maps）</span></div>
       <div class="cfg-kv-row"><span class="cfg-k">ORDER_PLACES_LAND_USE</span><span class="cfg-v"><code>{places_lu}</code>（1=每端多调 Place Details 以细化 warehouse 等；需 GCP 启用 Places API）</span></div>
+      <div class="cfg-kv-row"><span class="cfg-k">EW_SELF_REGISTER</span><span class="cfg-v">{_yes_no(bool(cfg.get("ew_self_register_on")))}（进程内当前值：<code>{html.escape(cfg.get("ew_self_register_raw") or "—")}</code>；已有用户时须为 1/true 才开放自助注册。若已写 .env 仍不生效，检查 <code>config/api.secrets.env</code> 是否含空行 <code>EW_SELF_REGISTER=</code> 覆盖了前者）</span></div>
       <div class="cfg-kv-row"><span class="cfg-k">EW_ADMIN_TOKEN</span><span class="cfg-v">{_yes_no(bool(cfg["admin_token_configured"]))}（保存表单必填）</span></div>
       <div class="cfg-kv-row"><span class="cfg-k">GOOGLE_APPLICATION_CREDENTIALS</span><span class="cfg-v">{_yes_no(bool(cfg["google_application_credentials_set"]))}，文件存在：{_yes_no(bool(cfg["google_application_credentials_file_ok"]))}{f' <code>{html.escape(cfg["google_application_credentials_basename"] or "")}</code>' if cfg.get("google_application_credentials_basename") else ""}</span></div>
     """

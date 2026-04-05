@@ -96,6 +96,8 @@ class SheetSyncJob:
     reading: ReadingRules = field(default_factory=ReadingRules)
     # Excel column letter → DB column; fill color read via Sheets API (not cell text)
     color_columns: dict[str, str] = field(default_factory=dict)
+    # Extra PG columns not from Sheet; filled in sync_config_to_db (e.g. parsed ZIPs)
+    enrich_columns: tuple[str, ...] = field(default_factory=tuple)
 
     def insert_column_order(self) -> list[str]:
         """All DB columns for INSERT/UPSERT and row dict export (values + color-derived)."""
@@ -106,6 +108,10 @@ class SheetSyncJob:
                 seen.add(pg)
                 out.append(pg)
         for _letter, pg in self.color_columns.items():
+            if pg not in seen:
+                seen.add(pg)
+                out.append(pg)
+        for pg in self.enrich_columns:
             if pg not in seen:
                 seen.add(pg)
                 out.append(pg)
@@ -299,11 +305,25 @@ def _load_ew_sheet_rules_v1(raw: dict[str, Any], path: Path) -> AppConfig:
 
     color_cols = _parse_color_columns(raw.get("color_columns"), "EW rules")
 
+    tbl = str(table)
+    enrich: tuple[str, ...] = (
+        (
+            "ship_from_zip",
+            "ship_from_city",
+            "ship_from_state",
+            "consignee_zip",
+            "consignee_city",
+            "consignee_state",
+        )
+        if tbl == "ew_orders"
+        else ()
+    )
+
     job = SheetSyncJob(
         label=label,
         worksheet_name=str(ws_name) if ws_name else None,
         worksheet_id=ws_id,
-        table=str(table),
+        table=tbl,
         primary_key=pk_t,
         columns=col_map,
         column_map_mode=cm_mode,
@@ -311,6 +331,7 @@ def _load_ew_sheet_rules_v1(raw: dict[str, Any], path: Path) -> AppConfig:
         data_start_row=dr,
         reading=reading,
         color_columns=color_cols,
+        enrich_columns=enrich,
     )
 
     return AppConfig(

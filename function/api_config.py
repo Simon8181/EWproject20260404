@@ -6,8 +6,9 @@ Load order (later overrides earlier for duplicate variable names):
   2. `config/api.secrets.env` (optional; use for API keys only)
   3. `config/ew_settings.env` (optional; 可由 /config 页面保存的非敏感项，如 ORDER_GOOGLE_MILES_MAX)
 
-After that, if root `.env` defines `DATABASE_URL`, it is applied again so the process
-always uses the same DB URL as your local schema (see db/schema_order.sql).
+After that, if root `.env` defines `DATABASE_URL` or `EW_SELF_REGISTER`, those values are
+applied again so local `.env` wins over `api.secrets.env` / `ew_settings.env` for these keys
+(same reason as DB URL: avoid accidental empty override in another file).
 
 Add new providers by extending `config/api.secrets.env` + a small getter below.
 
@@ -53,6 +54,28 @@ def _database_url_from_root_dotenv() -> str | None:
     return None
 
 
+def _ew_self_register_from_root_dotenv() -> str | None:
+    """If repo root `.env` defines EW_SELF_REGISTER, return its value (may be empty); else None."""
+    p = _ROOT / ".env"
+    if not p.is_file():
+        return None
+    try:
+        text = p.read_text(encoding="utf-8-sig")
+    except OSError:
+        return None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        if key.strip() != "EW_SELF_REGISTER":
+            continue
+        return val.strip().strip('"').strip("'")
+    return None
+
+
 def _load_api_env() -> None:
     # utf-8-sig: strip BOM so keys are not read as "\ufeffGOOGLE_..."
     _enc = "utf-8-sig"
@@ -67,6 +90,10 @@ def _load_api_env() -> None:
     du = _database_url_from_root_dotenv()
     if du:
         os.environ["DATABASE_URL"] = du
+    # 同上：EW_SELF_REGISTER 若在根 .env 中定义，最后覆盖（避免 secrets 里空 EW_SELF_REGISTER= 关掉自助注册）
+    ew_sr = _ew_self_register_from_root_dotenv()
+    if ew_sr is not None:
+        os.environ["EW_SELF_REGISTER"] = ew_sr
 
 
 _load_api_env()
@@ -162,6 +189,9 @@ def configuration_snapshot() -> dict[str, Any]:
         "order_google_miles_max": (os.environ.get("ORDER_GOOGLE_MILES_MAX") or "30").strip() or "30",
         "order_places_land_use": (os.environ.get("ORDER_PLACES_LAND_USE") or "0").strip() or "0",
         "admin_token_configured": bool(os.environ.get("EW_ADMIN_TOKEN", "").strip()),
+        "ew_self_register_raw": (os.environ.get("EW_SELF_REGISTER") or "").strip(),
+        "ew_self_register_on": (os.environ.get("EW_SELF_REGISTER") or "").strip().lower()
+        in ("1", "true", "yes", "on"),
         "google_application_credentials_set": bool(sa),
         "google_application_credentials_file_ok": bool(sa_path and sa_path.is_file()),
         "google_application_credentials_basename": sa_path.name if sa_path else None,

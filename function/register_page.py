@@ -9,7 +9,7 @@ from function.dat_theme import AUTH_PAGE_BODY_CSS, LAYOUT_SHELL_CSS
 from function.web_nav import render_sidebar_nav
 
 _REG_CSS = """
-    .lg-wrap { max-width: min(440px, 100%); margin: 0 auto; color: #f3f4f6; }
+    .lg-wrap { max-width: min(340px, 100%); margin: 0 auto; color: #f3f4f6; }
     .lg-top h1 { font-size: clamp(22px, 4vw, 26px); font-weight: 800; margin: 0 0 8px; color: #fff; }
     .lg-top .lg-brand { color: #38bdf8; }
     .lg-lead { font-size: 14px; color: #d4d4d8; line-height: 1.55; margin: 0 0 20px; max-width: 52ch; }
@@ -17,13 +17,16 @@ _REG_CSS = """
     .lg-box {
       background: #18181b; border: 1px solid #3f3f46; border-radius: 12px; padding: 20px 18px;
     }
+    .lg-box form { max-width: 280px; }
     .lg-field { margin-bottom: 14px; }
     .lg-field label { display: block; font-size: 13px; font-weight: 700; color: #e4e4e7; margin-bottom: 6px; }
-    .lg-field input[type="password"], .lg-field input[type="text"] {
-      width: 100%; padding: 11px 12px; font-size: 15px; border-radius: 8px;
+    .lg-field input[type="password"], .lg-field input[type="text"], .lg-field select {
+      width: 100%; padding: 10px 11px; font-size: 15px; border-radius: 8px;
       border: 1px solid #52525b; background: #09090b; color: #fafafa;
+      box-sizing: border-box;
     }
-    .lg-field input:focus { outline: 2px solid rgba(56, 189, 248, 0.55); outline-offset: 1px; border-color: rgba(56, 189, 248, 0.45); }
+    .lg-field select { cursor: pointer; }
+    .lg-field input:focus, .lg-field select:focus { outline: 2px solid rgba(56, 189, 248, 0.55); outline-offset: 1px; border-color: rgba(56, 189, 248, 0.45); }
     .lg-btn {
       display: inline-flex; align-items: center; justify-content: center;
       min-height: 44px; padding: 0 22px; font-size: 15px;
@@ -44,6 +47,7 @@ _REG_CSS = """
       padding: 12px 14px; border-radius: 8px; margin-bottom: 14px; font-size: 13px; font-weight: 600;
       line-height: 1.5; background: rgba(120, 53, 15, 0.55); border: 1px solid #fbbf24; color: #fef3c7;
     }
+    .lg-box .lg-auth-switch { max-width: 280px; }
     .lg-auth-switch { margin-top: 14px; font-size: 13px; color: #a1a1aa; }
     .lg-auth-switch a { color: #fdba74; font-weight: 700; text-decoration: none; }
     .lg-auth-switch a:hover { text-decoration: underline; }
@@ -58,6 +62,7 @@ def render_register_page(
     signing_ok: bool = True,
     show_code_field: bool = False,
     closed_message: str | None = None,
+    first_user: bool = False,
 ) -> str:
     next_esc = html.escape(next_path, quote=True)
     next_login = urlquote(next_path, safe="")
@@ -72,6 +77,24 @@ def render_register_page(
             </div>
 """
 
+    role_row_first = """
+            <input type="hidden" name="role" value="developer"/>
+            <div class="lg-field">
+              <span style="display:block;font-size:13px;font-weight:700;color:#e4e4e7;margin-bottom:6px;">角色</span>
+              <p class="lg-muted" style="margin:0;">首个账号固定为 <strong>开发者</strong>（全站与用户管理）。</p>
+            </div>
+"""
+    role_row_choice = """
+            <div class="lg-field">
+              <label for="reg-role">角色</label>
+              <select id="reg-role" name="role" required aria-label="角色">
+                <option value="broker">Broker（下单与同步）</option>
+                <option value="boss">Boss（订单与集成）</option>
+              </select>
+            </div>
+"""
+    role_row = role_row_first if first_user else role_row_choice
+
     form_block = f"""
           <form method="post" action="/register" autocomplete="off">
             <input type="hidden" name="next" value="{next_esc}"/>
@@ -79,6 +102,7 @@ def render_register_page(
               <label for="reg-user">用户名</label>
               <input id="reg-user" name="username" type="text" autocomplete="username" required maxlength="64" placeholder="登录名"/>
             </div>
+            {role_row}
             <div class="lg-field">
               <label for="reg-pass">密码（至少 6 位）</label>
               <input id="reg-pass" name="password" type="password" autocomplete="new-password" required minlength="6"/>
@@ -109,8 +133,9 @@ def render_register_page(
     if not signing_ok:
         lead_html = (
             "<p class=\"lg-lead\">当前<strong>无法注册</strong>：服务器尚未配置用于<strong>签发登录会话</strong>的密钥。"
-            "请在 <code>config/api.secrets.env</code> 中设置 <code>EW_SESSION_SECRET</code>（推荐）或 "
-            "<code>EW_ADMIN_TOKEN</code>，保存后<strong>重启 uvicorn</strong>，再刷新本页。配置好之前，"
+            "请在仓库根目录 <code>.env</code> 或 <code>config/api.secrets.env</code> 中设置 "
+            "<code>EW_SESSION_SECRET</code>（推荐）或 <code>EW_ADMIN_TOKEN</code>，保存后<strong>重启 uvicorn</strong>，"
+            "再刷新本页。配置好之前，"
             "下面的「首个账号为开发者」等规则不会生效。</p>"
         )
     elif not allowed:
@@ -120,8 +145,9 @@ def render_register_page(
         )
     else:
         lead_html = (
-            "<p class=\"lg-lead\">首个账号为 <strong>开发者</strong>；开放注册后新用户为 <strong>Broker</strong>。"
-            "管理员可在 <code>config/api.secrets.env</code> 设置 <code>EW_SELF_REGISTER=1</code> 与可选 "
+            "<p class=\"lg-lead\">首个账号固定为 <strong>开发者</strong>；其后自助注册可在表单中选择 <strong>Boss</strong> 或 <strong>Broker</strong>。"
+            "开发者账号仅能通过管理员添加或 CLI。"
+            "管理员可在 <code>.env</code> 或 <code>config/api.secrets.env</code> 设置 <code>EW_SELF_REGISTER=1</code> 与可选 "
             "<code>EW_REGISTRATION_CODE</code>。</p>"
         )
 

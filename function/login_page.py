@@ -9,7 +9,7 @@ from function.dat_theme import AUTH_PAGE_BODY_CSS, LAYOUT_SHELL_CSS
 from function.web_nav import render_sidebar_nav
 
 _LOGIN_CSS = """
-    .lg-wrap { max-width: min(440px, 100%); margin: 0 auto; color: #f3f4f6; }
+    .lg-wrap { max-width: min(340px, 100%); margin: 0 auto; color: #f3f4f6; }
     .lg-top h1 { font-size: clamp(22px, 4vw, 26px); font-weight: 800; margin: 0 0 8px; color: #fff; }
     .lg-top .lg-brand { color: #38bdf8; }
     .lg-lead { font-size: 14px; color: #d4d4d8; line-height: 1.55; margin: 0 0 20px; max-width: 52ch; }
@@ -17,11 +17,13 @@ _LOGIN_CSS = """
     .lg-box {
       background: #18181b; border: 1px solid #3f3f46; border-radius: 12px; padding: 20px 18px;
     }
+    .lg-box form { max-width: 280px; }
     .lg-field { margin-bottom: 14px; }
     .lg-field label { display: block; font-size: 13px; font-weight: 700; color: #e4e4e7; margin-bottom: 6px; }
     .lg-field input[type="password"], .lg-field input[type="text"] {
-      width: 100%; padding: 11px 12px; font-size: 15px; border-radius: 8px;
+      width: 100%; padding: 10px 11px; font-size: 15px; border-radius: 8px;
       border: 1px solid #52525b; background: #09090b; color: #fafafa;
+      box-sizing: border-box;
     }
     .lg-field input:focus { outline: 2px solid rgba(56, 189, 248, 0.55); outline-offset: 1px; border-color: rgba(56, 189, 248, 0.45); }
     .lg-btn {
@@ -45,6 +47,7 @@ _LOGIN_CSS = """
       line-height: 1.5; background: rgba(120, 53, 15, 0.55); border: 1px solid #fbbf24; color: #fef3c7;
     }
     .lg-warn code { font-size: 0.95em; color: #fde68a; }
+    .lg-box .lg-auth-switch { max-width: 280px; }
     .lg-auth-switch { margin-top: 14px; font-size: 13px; color: #a1a1aa; }
     .lg-auth-switch a { color: #fdba74; font-weight: 700; text-decoration: none; }
     .lg-auth-switch a:hover { text-decoration: underline; }

@@ -25,7 +25,8 @@ def normalize_role(raw: str | None) -> Role | None:
 
 
 def can_sync_orders(role: str | None) -> bool:
-    return normalize_role(role) is not None
+    """Sheet→Postgres 同步（下单页「从 Sheet 刷新」）：仅开发者；Boss/Broker 只读列表。"""
+    return normalize_role(role) == "developer"
 
 
 def can_view_config(role: str | None) -> bool:

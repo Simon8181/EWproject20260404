@@ -7,6 +7,8 @@ from typing import Any
 import gspread
 import psycopg
 
+from function.order_zip import first_us_zip
+
 from .config import (
     AppConfig,
     ReadingRules,
@@ -19,6 +21,21 @@ from .config import (
 from .sheet_cell_colors import fetch_column_fill_labels
 
 logger = logging.getLogger(__name__)
+
+
+def _enrich_ew_order_row(row: dict[str, Any]) -> None:
+    """Fill ship_from_zip / consignee_zip from free-text I/K/J (US ZIP)."""
+    sf = str(row.get("ship_from", "") or "")
+    dest = "\n".join(
+        x
+        for x in (
+            str(row.get("consignee_address", "") or "").strip(),
+            str(row.get("consignee_contact", "") or "").strip(),
+        )
+        if x
+    )
+    row["ship_from_zip"] = first_us_zip(sf)
+    row["consignee_zip"] = first_us_zip(dest)
 
 
 def _open_sheet_client() -> gspread.Client:
@@ -214,7 +231,10 @@ def sync_config_to_db(cfg: AppConfig, *, set_synced_at: bool = True) -> dict[str
                 nr = normalize_row_strings(r, job.reading)
                 if not row_passes_filters(nr, job.reading, job):
                     continue
-                mapped_rows.append(job.project_normalized_row(nr))
+                mr = job.project_normalized_row(nr)
+                if job.enrich_columns and job.table == "ew_orders":
+                    _enrich_ew_order_row(mr)
+                mapped_rows.append(mr)
             n = upsert_job(conn, job, mapped_rows, set_synced_at=set_synced_at)
             conn.commit()
             counts[f"{job.label}->{job.table}"] = n
