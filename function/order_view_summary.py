@@ -102,12 +102,32 @@ def _looks_like_year(v: float) -> bool:
     return len(str(iv)) == 4 and 1900 <= iv <= 2099
 
 
-def _parse_fold_price_fallback_number(text: str) -> float | None:
-    """算式失败时取格内数字；多个时取 max（略 1900–2099 年份）。"""
-    raw = str(text or "").strip()
-    if not raw:
+_DOLLAR_AMOUNTS_RE = re.compile(
+    r"\$[\s,]*(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?",
+)
+
+
+def _dollar_amounts_from_text(text: str) -> list[float]:
+    """从原文提取 ``$2,450`` 式金额（避免与地址邮编 30043 等混淆）。"""
+    out: list[float] = []
+    for m in _DOLLAR_AMOUNTS_RE.finditer(str(text or "")):
+        try:
+            out.append(float(m.group(1).replace(",", "")))
+        except ValueError:
+            continue
+    return out
+
+
+def _parse_fold_price_fallback_number(original_text: str, raw: str | None = None) -> float | None:
+    """算式失败时：优先 ``$`` 后金额；否则取格内数字 max（略 1900–2099 年份）。"""
+    ot = str(original_text or "").strip()
+    raw_in = raw if raw is not None else _preprocess_price_cell(ot)
+    if not raw_in:
         return None
-    compact = raw.replace(",", "").replace("$", " ")
+    dollars = _dollar_amounts_from_text(ot)
+    if dollars:
+        return max(dollars)
+    compact = str(raw_in).replace(",", "").replace("$", " ")
     vals: list[float] = []
     for s in re.findall(r"[-+]?\d+(?:\.\d+)?", compact):
         try:
@@ -173,6 +193,22 @@ def _strip_text_for_price_formula(s: str) -> str:
     return t.strip()
 
 
+# 金额后仅作备注的加号（如 ``1900+++`` 表示可再给司机加一点），不参与 ``+`` 运算。
+_TRAILING_PLUS_NOTES = re.compile(
+    r"(\d(?:[0-9,]*\.?[0-9]*)?)(?:\s*\+){2,}\s*$"
+)
+
+
+def _strip_trailing_plus_notes(s: str) -> str:
+    """去掉末尾 ``1900+++`` 式备注，保留数字主体。"""
+    t = s
+    while True:
+        nxt = _TRAILING_PLUS_NOTES.sub(r"\1", t)
+        if nxt == t:
+            return t.strip()
+        t = nxt
+
+
 _TWO_NUM_RANGE = re.compile(
     r"^([-+]?\d+(?:\.\d+)?)\s*-\s*([-+]?\d+(?:\.\d+)?)$"
 )
@@ -186,6 +222,7 @@ def _preprocess_price_cell(text: str) -> str | None:
     raw = _normalize_fold_formula_chars(raw)
     raw = _strip_truck_ft_length_note(raw)
     raw = _take_last_equals_suffix(raw)
+    raw = _strip_trailing_plus_notes(raw)
     raw = _strip_text_for_price_formula(raw)
     return raw if raw else None
 
@@ -231,7 +268,44 @@ def _safe_eval_price_ast(node: ast.AST) -> float:
     raise ValueError
 
 
-def _try_parse_two_num_range(t: str) -> tuple[float, float] | None:
+def _looks_like_zip5_pair_not_dollar_range(
+    a: float, b: float, *, original_has_dollar: bool
+) -> bool:
+    """
+    ``30043-33563`` 常为起终点邮编对，勿当作美元区间。
+    若格内已有 ``$``，仍按价格区间处理（如 ``$30000-$33000``）。
+    """
+    if original_has_dollar:
+        return False
+    if abs(a - round(a)) > 1e-6 or abs(b - round(b)) > 1e-6:
+        return False
+    ia, ib = sorted((int(round(a)), int(round(b))))
+    if ia < 30_000:
+        return False
+    if ib > 99_999:
+        return False
+    if ib - ia > 4_000:
+        return False
+    return True
+
+
+def _looks_like_zip5_minus_zip5_subtraction(normalized: str, v: float) -> bool:
+    """``30043 - 33563`` 被当成减法时得负值，非单价。"""
+    if v >= 0:
+        return False
+    t = " ".join(normalized.split())
+    m = re.fullmatch(r"(\d+)\s*-\s*(\d+)", t)
+    if not m:
+        return False
+    a, b = int(m.group(1)), int(m.group(2))
+    if a < 10_000 or b < 10_000 or a > 99_999 or b > 99_999:
+        return False
+    return abs(v - (a - b)) < 1e-6
+
+
+def _try_parse_two_num_range(
+    t: str, *, original_text: str = ""
+) -> tuple[float, float] | None:
     """整串为 ``a - b`` 且 a≤b 时为区间，否则 None。"""
     if "=" in t:
         return None
@@ -242,7 +316,13 @@ def _try_parse_two_num_range(t: str) -> tuple[float, float] | None:
         a, b = float(m.group(1)), float(m.group(2))
     except ValueError:
         return None
-    return (a, b) if a <= b else None
+    if a <= b:
+        od = str(original_text or "")
+        has_dollar = "$" in od or "＄" in od or "USD" in od.upper()
+        if _looks_like_zip5_pair_not_dollar_range(a, b, original_has_dollar=has_dollar):
+            return None
+        return (a, b)
+    return None
 
 
 def parse_fold_price_scalar_or_range(
@@ -252,7 +332,7 @@ def parse_fold_price_scalar_or_range(
     raw = _preprocess_price_cell(text)
     if not raw:
         return None
-    r = _try_parse_two_num_range(raw)
+    r = _try_parse_two_num_range(raw, original_text=str(text or ""))
     if r is not None:
         return r
     normalized = re.sub(r"\s+", " ", raw.replace(",", "").replace("$", " ")).strip()
@@ -263,11 +343,14 @@ def parse_fold_price_scalar_or_range(
         v = _safe_eval_price_ast(tree)
         if abs(v) > 1e12:
             return None
+        # ``30043-33563`` 未进区间时会被解析成减法得负数，非单价
+        if _looks_like_zip5_minus_zip5_subtraction(normalized, v):
+            return None
         return v
     except ZeroDivisionError:
         return None
     except (SyntaxError, ValueError, TypeError):
-        return _parse_fold_price_fallback_number(raw)
+        return _parse_fold_price_fallback_number(str(text or ""), raw)
 
 
 def parse_fold_price_expression(text: str) -> float | None:
@@ -377,6 +460,11 @@ def summary_fold_margin_block(
         title = "差价 = 司机价(U) − 接单 Rate(W)；区间时显示上下界"
         if u is not None and w is not None:
             diff = _margin_diff_minus(u, w)
+        elif p is not None and u is not None:
+            title = (
+                "差价 = 客户报价(P) − 司机价(U)；接单 Rate 未解析或格内为邮编等非金额时按此显示"
+            )
+            diff = _margin_diff_minus(p, u)
     else:
         return ""
 
