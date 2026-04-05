@@ -341,9 +341,7 @@ def render_order_page(
                         '<p class="oc-sync-meta oc-sync-meta--muted">「从 Sheet 刷新」需数据库可用；并请在 <code>config/api.secrets.env</code> 配置 <code>EW_ADMIN_TOKEN</code> 后重启服务，再使用刷新。</p>'
                     )
                     if db_fallback_warning
-                    else (
-                        '<p class="oc-sync-meta">列表来自数据库 <code>ew_orders</code>（<code>ew_quote_no</code> 主键）。</p>'
-                    )
+                    else ""
                 )
                 + (
                     (
