@@ -14,6 +14,13 @@ ROLE_LABEL_ZH: dict[str, str] = {
     "broker": "Broker",
 }
 
+# 侧栏、技能区等：角色展示为英文
+ROLE_LABEL_EN: dict[str, str] = {
+    "developer": "Developer",
+    "boss": "Boss",
+    "broker": "Broker",
+}
+
 
 def normalize_role(raw: str | None) -> Role | None:
     if not raw:
@@ -48,12 +55,12 @@ def can_view_integration(role: str | None) -> bool:
 
 
 def nav_user_caption(username: str, role: str | None) -> str:
-    """侧栏等：登录名 + 中文角色；无有效角色时仅登录名（不臆造 Broker）。"""
+    """侧栏等：登录名 + 英文角色；无有效角色时仅登录名（不臆造 Broker）。"""
     u = (username or "").strip()
     if not u:
         return ""
     r = normalize_role(role)
     if not r:
         return u
-    zh = ROLE_LABEL_ZH.get(r, r)
-    return f"{u} · {zh}"
+    label = ROLE_LABEL_EN.get(r, r.title())
+    return f"{u} · {label}"

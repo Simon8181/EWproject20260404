@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import html
 
-from function.auth_roles import ROLE_LABEL_ZH, ROLES
+from function.auth_roles import ROLE_LABEL_EN, ROLES
 from function.dat_theme import AUTH_PAGE_BODY_CSS, LAYOUT_SHELL_CSS
 from function.web_nav import render_sidebar_nav
 
@@ -68,17 +68,17 @@ def render_users_page(
     for row in rows:
         un = html.escape(row["username"])
         role = row["role"]
-        zh = html.escape(ROLE_LABEL_ZH.get(role, role))
+        role_disp = html.escape(ROLE_LABEL_EN.get(role, role))
         bc = _badge_class(role)
         body_rows.append(
             f"<tr><td><code>{un}</code></td>"
-            f'<td><span class="um-badge {bc}">{zh}</span></td>'
+            f'<td><span class="um-badge {bc}">{role_disp}</span></td>'
             "<td>"
             f'<form class="um-inline" method="post" action="/users/role" style="display:inline">'
             f'<input type="hidden" name="username" value="{un}"/>'
             '<select name="role" aria-label="角色">'
             + "".join(
-                f'<option value="{html.escape(r)}"{" selected" if r == role else ""}>{html.escape(ROLE_LABEL_ZH.get(r, r))}</option>'
+                f'<option value="{html.escape(r)}"{" selected" if r == role else ""}>{html.escape(ROLE_LABEL_EN.get(r, r))}</option>'
                 for r in ROLES
             )
             + "</select>"
@@ -105,7 +105,7 @@ def render_users_page(
         flash += f'<div class="um-flash um-flash--err" role="alert">{html.escape(flash_err)}</div>'
 
     role_opts = "".join(
-        f'<option value="{html.escape(r)}">{html.escape(ROLE_LABEL_ZH.get(r, r))}</option>' for r in ROLES
+        f'<option value="{html.escape(r)}">{html.escape(ROLE_LABEL_EN.get(r, r))}</option>' for r in ROLES
     )
 
     return f"""<!DOCTYPE html>
