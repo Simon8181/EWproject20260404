@@ -48,6 +48,12 @@ def can_view_integration(role: str | None) -> bool:
 
 
 def nav_user_caption(username: str, role: str | None) -> str:
-    r = normalize_role(role) or "broker"
+    """侧栏等：登录名 + 中文角色；无有效角色时仅登录名（不臆造 Broker）。"""
+    u = (username or "").strip()
+    if not u:
+        return ""
+    r = normalize_role(role)
+    if not r:
+        return u
     zh = ROLE_LABEL_ZH.get(r, r)
-    return f"{username} · {zh}"
+    return f"{u} · {zh}"

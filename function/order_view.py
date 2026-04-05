@@ -251,9 +251,16 @@ def render_order_page(
         )
 
     def skills_headline_html() -> str:
+        # 已登录：与侧栏一致为「用户名 · 角色」；仅书签令牌无会话时用 EW_ADMIN_DISPLAY_NAME
+        label = (session_user or "").strip() or admin_sync_label
+        tip = (
+            "当前登录用户与角色"
+            if (session_user or "").strip()
+            else "管理员显示名（EW_ADMIN_DISPLAY_NAME），无会话时用于技能区标识"
+        )
         return (
             '<div class="oc-skills-headline" role="group" aria-label="技能">'
-            f'<span class="oc-skills-user" title="管理员显示名（EW_ADMIN_DISPLAY_NAME）">{_esc(admin_sync_label)}</span>'
+            f'<span class="oc-skills-user" title="{_esc(tip)}">{_esc(label)}</span>'
             '<span class="oc-skills-title">技能</span>'
             "</div>"
         )

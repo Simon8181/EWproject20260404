@@ -5,7 +5,12 @@ from __future__ import annotations
 import html
 from typing import Literal
 
-from function.auth_roles import can_manage_users, can_view_config, can_view_integration
+from function.auth_roles import (
+    can_manage_users,
+    can_view_config,
+    can_view_integration,
+    nav_user_caption,
+)
 
 NavActive = Literal["home", "order", "health", "config", "users", "integration"]
 
@@ -42,8 +47,12 @@ def render_sidebar_nav(
 
     nav_inner = "\n".join(parts)
 
+    su = (session_user or "").strip()
+    # 调用方通常已传入 nav_user_caption；若仅传登录名则在此补全「· 角色」
+    auth_label = su if " · " in su else nav_user_caption(su, role)
+
     auth_html = (
-        f'<div class="ew-nav-auth"><span class="ew-nav-user">{html.escape(session_user)}</span>'
+        f'<div class="ew-nav-auth"><span class="ew-nav-user">{html.escape(auth_label)}</span>'
         f'<a class="ew-nav-link ew-nav-link--sub" href="/logout">退出</a></div>'
     )
     return f"""
