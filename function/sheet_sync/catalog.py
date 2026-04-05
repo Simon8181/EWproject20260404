@@ -73,7 +73,10 @@ def resolve_rules_for_sheet(key: str) -> Path:
 def list_catalog_read_routes() -> list[dict[str, Any]]:
     """One entry per catalog sheet that defines a `/f/read/{name}` style route (for homepage links)."""
     out: list[dict[str, Any]] = []
-    catalog = load_catalog()
+    try:
+        catalog = load_catalog()
+    except (FileNotFoundError, OSError, ValueError, yaml.YAMLError):
+        return out
     sheets = catalog.get("sheets")
     if not isinstance(sheets, dict):
         return out

@@ -202,8 +202,19 @@ def health() -> dict[str, str]:
 
 @app.get("/docs/ew-usage-guide-v1.pdf", response_model=None)
 def usage_guide_v1_pdf() -> Response:
-    """第一版使用守则（PDF，中文）。"""
-    data = build_usage_guide_v1_pdf_bytes()
+    """第一版使用守则（PDF，中文）。依赖 reportlab；未安装时返回 503 说明。"""
+    try:
+        data = build_usage_guide_v1_pdf_bytes()
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail="缺少 PDF 依赖，请在项目目录执行：pip install reportlab",
+        ) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"PDF 生成失败：{e!s}",
+        ) from e
     return Response(
         content=data,
         media_type="application/pdf",
