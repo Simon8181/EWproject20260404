@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+from typing import Any
 from xml.sax.saxutils import escape
 
 # 正文：与产品行为一致；更新时请同步改版本号与页脚日期。
@@ -54,6 +55,21 @@ USAGE_GUIDE_V1_SECTIONS: list[tuple[str, list[str]]] = [
         ],
     ),
 ]
+
+
+def usage_guide_v1_json_payload() -> dict[str, Any]:
+    """与 PDF 同源；供 ``GET /docs/ew-usage-guide-v1.json`` 使用。"""
+    return {
+        "version": 1,
+        "title": USAGE_GUIDE_V1_TITLE,
+        "sections": [
+            {"heading": h, "paragraphs": list(lines)}
+            for h, lines in USAGE_GUIDE_V1_SECTIONS
+        ],
+        "related": {
+            "pdf_url": "/docs/ew-usage-guide-v1.pdf",
+        },
+    }
 
 
 def _paragraph_xml(lines: list[str]) -> str:

@@ -85,6 +85,7 @@ def render_home_page(
       <div class="hero-cta">
         <a class="btn primary" href="/f/read/order?fmt=html&amp;limit=50">下单视图</a>
         <a class="btn ghost" href="/docs/ew-usage-guide-v1.pdf" download>使用守则（PDF）</a>
+        <a class="btn ghost" href="/docs/ew-usage-guide-v1.json" target="_blank" rel="noopener">使用守则（JSON）</a>
 """
         + (
             '<a class="btn ghost" href="/config">配置</a>'
