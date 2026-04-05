@@ -207,9 +207,17 @@ def usage_guide_v1_json() -> JSONResponse:
     return JSONResponse(content=usage_guide_v1_json_payload())
 
 
+_PDF_USAGE_FILENAME_ASCII = "EW_usage_guide_v1.pdf"
+
+
 @app.get("/docs/ew-usage-guide-v1.pdf", response_model=None)
-def usage_guide_v1_pdf() -> Response:
-    """第一版使用守则（PDF，中文）。依赖 reportlab；未安装时返回 503 说明。"""
+def usage_guide_v1_pdf(
+    download: bool = Query(
+        False,
+        description="为 true 时以附件下载（仅 ASCII 文件名，避免系统拦截）；默认在浏览器内打开",
+    ),
+) -> Response:
+    """第一版使用守则（PDF）。默认 inline 便于预览；?download=1 附件下载。依赖 reportlab。"""
     try:
         data = build_usage_guide_v1_pdf_bytes()
     except ImportError as e:
@@ -222,11 +230,14 @@ def usage_guide_v1_pdf() -> Response:
             status_code=500,
             detail=f"PDF 生成失败：{e!s}",
         ) from e
+    # 文件名仅用 ASCII，避免 macOS/部分浏览器对非 ASCII 的 attachment 标记过严
+    disp = "attachment" if download else "inline"
     return Response(
         content=data,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": 'attachment; filename="EW_使用守则_v1.pdf"',
+            "Content-Disposition": f'{disp}; filename="{_PDF_USAGE_FILENAME_ASCII}"',
+            "X-Content-Type-Options": "nosniff",
         },
     )
 

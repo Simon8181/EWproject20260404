@@ -67,7 +67,9 @@ def usage_guide_v1_json_payload() -> dict[str, Any]:
             for h, lines in USAGE_GUIDE_V1_SECTIONS
         ],
         "related": {
-            "pdf_url": "/docs/ew-usage-guide-v1.pdf",
+            "pdf_open_url": "/docs/ew-usage-guide-v1.pdf",
+            "pdf_download_url": "/docs/ew-usage-guide-v1.pdf?download=1",
+            "pdf_filename_ascii": "EW_usage_guide_v1.pdf",
         },
     }
 

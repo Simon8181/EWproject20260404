@@ -84,7 +84,8 @@ def render_home_page(
       <p class="lead">从 <code>EW_CATALOG.yaml</code> 声明的路径读取 Google Sheet；大表请加 <code>limit</code>。</p>
       <div class="hero-cta">
         <a class="btn primary" href="/f/read/order?fmt=html&amp;limit=50">下单视图</a>
-        <a class="btn ghost" href="/docs/ew-usage-guide-v1.pdf" download>使用守则（PDF）</a>
+        <a class="btn ghost" href="/docs/ew-usage-guide-v1.pdf" target="_blank" rel="noopener" title="在浏览器中打开 PDF">使用守则（PDF）</a>
+        <a class="btn ghost" href="/docs/ew-usage-guide-v1.pdf?download=1" download="EW_usage_guide_v1.pdf" title="保存到本机（ASCII 文件名）">下载守则 PDF</a>
         <a class="btn ghost" href="/docs/ew-usage-guide-v1.json" target="_blank" rel="noopener">使用守则（JSON）</a>
 """
         + (
