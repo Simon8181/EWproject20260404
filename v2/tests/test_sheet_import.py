@@ -24,6 +24,7 @@ def _quote_tab() -> TabConfig:
             "red": "ordered",
             "green": "carrier_assigned",
         },
+        ai_import_parse=None,
     )
 
 
@@ -45,6 +46,7 @@ def _order_tab() -> TabConfig:
             "red": "ordered",
             "green": "carrier_assigned",
         },
+        ai_import_parse=None,
     )
 
 

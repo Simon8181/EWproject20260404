@@ -20,7 +20,9 @@
 4. **迁移触发**：若当前 `load` 表 DDL 的 CHECK 中缺少本需求规定的任一状态关键字，则重建 `load` 表并复制数据（保留列集合与 `PRAGMA table_info` 顺序一致）。
 5. **运营扩展列**（与网页真相源一致，可为空默认值）：  
    `pickup_eta`、`delivery_eta`、`pickup_tz`、`delivery_tz`、`carrier_note`、`cargo_ready`（0/1）、`operator_updated_by`、`operator_updated_at`。
-6. **兼容**：新库 `CREATE TABLE IF NOT EXISTS` 含完整列；旧库通过 `ALTER` 补列后再按上条规则处理 CHECK。
+6. **Sheet 备注派生列**（由导入根据 D/E/F 规则解析写入，默认空）：  
+   `broker`、`actual_driver_rate_raw`（实际给司机价）、`carriers`（MC/3PL 等）；与 `note_d_raw` / `note_e_raw` / `note_f_raw` 并存，见 `sheet-import.md`。
+7. **兼容**：新库 `CREATE TABLE IF NOT EXISTS` 含完整列；旧库通过 `ALTER` 补列后再按上条规则处理 CHECK。
 
 ## 非功能约束
 

@@ -7,6 +7,35 @@ from typing import Any
 
 import yaml
 
+# Sheet-import AI may only suggest these columns (subset of sheet-imported fields; no ops/ETA).
+DEFAULT_AI_IMPORT_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "customer_name",
+        "note_d_raw",
+        "note_e_raw",
+        "note_f_raw",
+        "pieces_raw",
+        "commodity_desc",
+        "ship_from_raw",
+        "consignee_contact",
+        "ship_to_raw",
+        "weight_raw",
+        "dimension_raw",
+        "volume_raw",
+        "cargo_value_raw",
+        "customer_quote_raw",
+        "driver_rate_raw",
+    }
+)
+
+
+@dataclass(frozen=True)
+class AiImportParseConfig:
+    enabled: bool
+    rules_resolved: str
+    fields_allowlist: frozenset[str]
+    scope: str
+
 
 @dataclass(frozen=True)
 class TabConfig:
@@ -23,12 +52,49 @@ class TabConfig:
     trouble_truthy: tuple[str, ...]
     use_color_status: bool
     color_status_map: dict[str, str]
+    ai_import_parse: AiImportParseConfig | None
 
 
 @dataclass(frozen=True)
 class LoadMapping:
     spreadsheet_id: str
     tabs: tuple[TabConfig, ...]
+
+
+def _parse_ai_import_parse(
+    tab: dict[str, Any], *, mapping_path: Path
+) -> AiImportParseConfig | None:
+    block = tab.get("ai_import_parse")
+    if not block or not isinstance(block, dict):
+        return None
+    enabled = bool(block.get("enabled", False))
+    rules_text = str(block.get("rules_text") or "").strip()
+    rules_file = str(block.get("rules_file") or "").strip()
+    file_body = ""
+    if rules_file:
+        fp = (mapping_path.parent / rules_file).resolve()
+        if fp.is_file():
+            file_body = fp.read_text(encoding="utf-8").strip()
+    rules_resolved = "\n\n".join(x for x in (rules_text, file_body) if x).strip()
+    raw_list = block.get("fields_allowlist")
+    if raw_list and isinstance(raw_list, list):
+        allow = frozenset(
+            str(x).strip()
+            for x in raw_list
+            if str(x).strip() and str(x).strip() in DEFAULT_AI_IMPORT_ALLOWLIST
+        )
+        fields_allowlist = allow if allow else DEFAULT_AI_IMPORT_ALLOWLIST
+    else:
+        fields_allowlist = DEFAULT_AI_IMPORT_ALLOWLIST
+    scope = str(block.get("scope") or "aggregated").strip().lower()
+    if scope not in ("aggregated", "per_tab_row"):
+        scope = "aggregated"
+    return AiImportParseConfig(
+        enabled=enabled,
+        rules_resolved=rules_resolved,
+        fields_allowlist=fields_allowlist,
+        scope=scope,
+    )
 
 
 def load_mapping(path: Path) -> LoadMapping:
@@ -73,6 +139,7 @@ def load_mapping(path: Path) -> LoadMapping:
                     for k, v in (tab.get("color_status_map") or {}).items()
                     if str(k).strip() and str(v).strip()
                 },
+                ai_import_parse=_parse_ai_import_parse(tab, mapping_path=path),
             )
         )
     if not tabs_cfg:

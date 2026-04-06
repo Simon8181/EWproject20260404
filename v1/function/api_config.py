@@ -155,6 +155,47 @@ def reload_api_env() -> None:
     _load_api_env()
 
 
+def ew_smtp_settings() -> dict[str, Any] | None:
+    """
+    发信（使用守则邮件等）。需设置 EW_SMTP_HOST；EW_SMTP_FROM 缺省时用 EW_SMTP_USER。
+    EW_SMTP_SSL=1 时用 SMTP_SSL（常见 465）；否则 EW_SMTP_TLS（默认 1）对 587 等走 STARTTLS。
+    """
+    host = (os.environ.get("EW_SMTP_HOST") or "").strip()
+    if not host:
+        return None
+    port_s = (os.environ.get("EW_SMTP_PORT") or "587").strip()
+    try:
+        port = int(port_s or "587")
+    except ValueError:
+        port = 587
+    user = (os.environ.get("EW_SMTP_USER") or "").strip()
+    password = (os.environ.get("EW_SMTP_PASSWORD") or "").strip()
+    from_addr = (os.environ.get("EW_SMTP_FROM") or user or "").strip()
+    if not from_addr:
+        return None
+    use_ssl = (os.environ.get("EW_SMTP_SSL") or "").strip().lower() in ("1", "true", "yes", "on")
+    use_starttls = (os.environ.get("EW_SMTP_TLS", "1") or "").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+    )
+    if use_ssl:
+        use_starttls = False
+    return {
+        "host": host,
+        "port": port,
+        "user": user,
+        "password": password,
+        "from_addr": from_addr,
+        "use_ssl": use_ssl,
+        "use_starttls": use_starttls,
+    }
+
+
+def ew_smtp_configured() -> bool:
+    return ew_smtp_settings() is not None
+
+
 def ew_admin_order_sync_label() -> str:
     """Shown next to the order page one-click sync button (bookmark with ?token=)."""
     v = (os.environ.get("EW_ADMIN_DISPLAY_NAME") or "").strip()
@@ -189,6 +230,7 @@ def configuration_snapshot() -> dict[str, Any]:
         "order_google_miles_max": (os.environ.get("ORDER_GOOGLE_MILES_MAX") or "30").strip() or "30",
         "order_places_land_use": (os.environ.get("ORDER_PLACES_LAND_USE") or "0").strip() or "0",
         "admin_token_configured": bool(os.environ.get("EW_ADMIN_TOKEN", "").strip()),
+        "ew_smtp_configured": ew_smtp_configured(),
         "ew_self_register_raw": (os.environ.get("EW_SELF_REGISTER") or "").strip(),
         "ew_self_register_on": (os.environ.get("EW_SELF_REGISTER") or "").strip().lower()
         in ("1", "true", "yes", "on"),

@@ -167,6 +167,12 @@ def _load_tab_detail_dl(r: dict[str, str]) -> str:
         ("status", txt("status")),
         ("trouble", trouble),
         ("customer", txt("customer_name")),
+        ("note_D", txt("note_d_raw", 400)),
+        ("note_E", txt("note_e_raw", 400)),
+        ("note_F", txt("note_f_raw", 400)),
+        ("broker", txt("broker")),
+        ("actual_driver_rate", txt("actual_driver_rate_raw")),
+        ("carriers", txt("carriers", 400)),
         ("commodity", txt("commodity_desc")),
         ("ship_from", txt("ship_from_raw")),
         ("J_consignee", txt("consignee_contact")),
@@ -846,9 +852,18 @@ def action_import() -> RedirectResponse:
             force_reimport=False,
             trigger="debug-button",
         )
+        ai_tail = ""
+        if stats.ai_import_calls:
+            ai_tail = (
+                f" import_ai_calls={stats.ai_import_calls}"
+                f" import_ai_failures={stats.ai_import_failures}"
+            )
         q = urlencode(
             {
-                "msg": f"导入完成: read={stats.rows_read}, written={stats.rows_written}, skipped={stats.rows_skipped}"
+                "msg": (
+                    f"导入完成: read={stats.rows_read}, written={stats.rows_written}, "
+                    f"skipped={stats.rows_skipped}{ai_tail}"
+                )
             }
         )
         return RedirectResponse(url=f"/debug?{q}", status_code=303)
@@ -1163,6 +1178,8 @@ def _tab_rows(tab_key: str, *, load_state: str | None = None) -> list[dict[str, 
     rows = conn.execute(
         f"""
         SELECT quote_no, status, is_trouble_case, customer_name, commodity_desc,
+               note_d_raw, note_e_raw, note_f_raw,
+               broker, actual_driver_rate_raw, carriers,
                ship_from_raw, consignee_contact, shipper_info, consignee_info, ship_to_raw, weight_raw, dimension_raw, volume_raw,
                distance_miles, origin_land_use, dest_land_use, validate_ok, validate_error,
                used_ai_retry, ai_confidence, origin_normalized, dest_normalized,

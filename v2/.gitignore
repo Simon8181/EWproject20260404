@@ -4,6 +4,7 @@ config/.env.local
 config/service_account.json
 
 # Python
+.venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/

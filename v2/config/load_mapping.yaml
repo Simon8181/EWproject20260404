@@ -16,6 +16,13 @@ tabs:
     trouble_case:
       column_letter: ""
       truthy: ["1", "true", "yes", "y", "trouble"]
+    # 可选：导入后按规则用 Gemini 补缺（仅填空字段）；需 AI_SHEET_IMPORT_ENABLED=1 与 GEMINI_API_KEY。
+    # ai_import_parse:
+    #   enabled: false
+    #   rules_text: |
+    #     根据各列含义规范化货描与地址文本；不得编造。
+    #   # rules_file: import_ai_rules/quote.md
+    #   # fields_allowlist: [commodity_desc, ship_from_raw, ship_to_raw]
 
   - key: order
     worksheet: "下单 BOL need booking"

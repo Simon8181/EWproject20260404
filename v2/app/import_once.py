@@ -46,7 +46,9 @@ def main(argv: list[str] | None = None) -> int:
         trigger=args.trigger,
     )
     print(
-        f"import_done rows_read={stats.rows_read} rows_written={stats.rows_written} rows_skipped={stats.rows_skipped}"
+        f"import_done rows_read={stats.rows_read} rows_written={stats.rows_written} "
+        f"rows_skipped={stats.rows_skipped} "
+        f"import_ai_calls={stats.ai_import_calls} import_ai_failures={stats.ai_import_failures}"
     )
     return 0
 

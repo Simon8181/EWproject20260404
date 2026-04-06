@@ -24,6 +24,9 @@ def render_home_page(
     *,
     session_user: str | None = None,
     role: str | None = None,
+    usage_email_ok: bool = False,
+    usage_email_err: str | None = None,
+    smtp_configured: bool = False,
 ) -> str:
     cards: list[str] = []
     for it in items:
@@ -49,6 +52,67 @@ def render_home_page(
             """
         )
     cards_html = "".join(cards) if cards else '<p class="empty">EW_CATALOG.yaml 中暂无 /f/read/ 路由。</p>'
+
+    flash_usage = ""
+    if usage_email_ok:
+        flash_usage = (
+            '<div class="flash flash--ok" role="status">'
+            '<span class="flash-icon" aria-hidden="true">'
+            '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">'
+            '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>'
+            '<polyline points="22 4 12 14.01 9 11.01"/>'
+            "</svg>"
+            "</span>"
+            '<div class="flash-text">'
+            "<strong>已发出</strong>"
+            "<span>说明已发到你的邮箱；若未看到，请到垃圾箱里找一下。附件为 PDF。</span>"
+            "</div>"
+            "</div>"
+        )
+    elif usage_email_err:
+        flash_usage = (
+            '<div class="flash flash--err" role="alert">'
+            '<span class="flash-icon flash-icon--err" aria-hidden="true">'
+            '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">'
+            '<circle cx="12" cy="12" r="10"/>'
+            '<line x1="12" y1="8" x2="12" y2="12"/>'
+            '<line x1="12" y1="16" x2="12.01" y2="16"/>'
+            "</svg>"
+            "</span>"
+            '<div class="flash-text">'
+            "<strong>未能发送</strong>"
+            f"<span>{html.escape(usage_email_err)}</span>"
+            "</div>"
+            "</div>"
+        )
+
+    smtp_hint = (
+        (
+            '<div class="usage-mail-callout usage-mail-callout--warn" role="note">'
+            "<strong>暂时不可用</strong>"
+            "<p>管理员还未配置发信（环境变量 <code>EW_SMTP_HOST</code> 等）。配好后此处即可使用。</p>"
+            "</div>"
+        )
+        if not smtp_configured
+        else (
+            '<div class="usage-mail-callout usage-mail-callout--info" role="note">'
+            "<strong>你可以这样理解</strong>"
+            "<p>点一次按钮，系统就向下方邮箱投递<strong>一封</strong>带 PDF 附件的邮件；内容随当前服务版本生成。</p>"
+            "</div>"
+        )
+    )
+    submit_disabled = "" if smtp_configured else " disabled"
+    submit_aria = (
+        ""
+        if smtp_configured
+        else ' aria-disabled="true" title="发信未配置"'
+    )
+    usage_mail_submit_btn = (
+        '        <button type="submit" class="btn primary usage-mail-submit"'
+        + submit_aria
+        + submit_disabled
+        + ">发到我邮箱</button>\n"
+    )
 
     return (
         """<!DOCTYPE html>
@@ -84,9 +148,6 @@ def render_home_page(
       <p class="lead">从 <code>EW_CATALOG.yaml</code> 声明的路径读取 Google Sheet；大表请加 <code>limit</code>。</p>
       <div class="hero-cta">
         <a class="btn primary" href="/f/read/order?fmt=html&amp;limit=50">下单视图</a>
-        <a class="btn ghost" href="/docs/ew-usage-guide-v1.pdf" target="_blank" rel="noopener" title="在浏览器中打开 PDF">使用守则（PDF）</a>
-        <a class="btn ghost" href="/docs/ew-usage-guide-v1.pdf?download=1" download="EW_usage_guide_v1.pdf" title="保存到本机（ASCII 文件名）">下载守则 PDF</a>
-        <a class="btn ghost" href="/docs/ew-usage-guide-v1.json" target="_blank" rel="noopener">使用守则（JSON）</a>
 """
         + (
             '<a class="btn ghost" href="/config">配置</a>'
@@ -113,6 +174,40 @@ def render_home_page(
         <a href="/health">/health</a>
       </div>
     </header>
+    <section id="ew-doc-email" class="usage-mail doc-email" aria-labelledby="ew-doc-heading">
+"""
+        + flash_usage
+        + """
+      <div class="usage-mail-inner">
+        <h2 id="ew-doc-heading">邮件领取工作台说明</h2>
+        <p class="usage-mail-lead">这是<strong>给自己发存档</strong>：把当前平台怎么用（角色、订单、报价规则等）打成一份 PDF，发到你的邮箱，便于留存或转给同事。不用于广告或订阅。</p>
+        <p class="doc-email-capsule">每次提交只发一封邮件，带 PDF 附件；须先登录。</p>
+"""
+        + smtp_hint
+        + """
+        <form method="post" action="/docs/ew-usage-guide-v1/email" class="usage-mail-form" aria-describedby="ew-doc-heading">
+          <div class="usage-mail-field">
+            <label class="usage-mail-label" for="usage-email-to">发到哪个邮箱</label>
+            <input
+              id="usage-email-to"
+              class="usage-mail-input"
+              type="email"
+              name="to"
+              required
+              autocomplete="email"
+              inputmode="email"
+              placeholder="你的邮箱地址"
+            />
+          </div>
+          <div class="usage-mail-actions">
+"""
+        + usage_mail_submit_btn
+        + """
+          </div>
+          <p class="usage-mail-footnote">仅投递本工作台说明文件，不作营销推广。</p>
+        </form>
+      </div>
+    </section>
     <section aria-labelledby="routes-heading">
       <div class="section-head">
         <h2 id="routes-heading">可读路由</h2>
@@ -134,6 +229,25 @@ def render_home_page(
   </div>
     </main>
   </div>
+  <script>
+(function () {
+  try {
+    var u = new URL(window.location.href);
+    if (u.searchParams.has("usage_email") || u.searchParams.has("usage_email_err")) {
+      var el = document.getElementById("ew-doc-email");
+      if (el) {
+        requestAnimationFrame(function () {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      }
+      var path = window.location.pathname + (window.location.hash || "");
+      if (u.search) {
+        history.replaceState(null, "", path);
+      }
+    }
+  } catch (e) {}
+})();
+  </script>
 </body>
 </html>
 """

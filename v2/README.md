@@ -19,6 +19,7 @@ pip install -r requirements.txt
 2. 配置 `GOOGLE_APPLICATION_CREDENTIALS`（service account json）
 3. 编辑 `config/load_mapping.yaml`（我已给出初版，你可手动调整列名和规则）
 4. 把 `spreadsheet_id` 改成你的 Sheet ID
+5. 可选：在 `load_mapping.yaml` 的 tab 下配置 `ai_import_parse`，并设置 `AI_SHEET_IMPORT_ENABLED=1`（需 `GEMINI_API_KEY`）。详见 `requirements/sheet-import.md`。
 
 ## 当前导入列范围
 - 仅导入已定义列：`A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,U`
@@ -68,7 +69,7 @@ uvicorn app.debug_web:app --host 127.0.0.1 --port 8010 --reload
   回写里程和场所类型；若地址验证失败，按当前规则会删除该行及其验证日志。
 - `仅验证当前 tab`：在各 `tab` 页面单独触发，只处理当前 tab 数据（同样失败即删除）。
 - `清空数据（仅 load）`：只清空 `load` 表，不清日志和导入锁
-- `导入数据`：触发一次导入（遵守导入锁）
+- `导入数据`：触发一次导入（遵守导入锁）；若开启 `AI_SHEET_IMPORT_ENABLED` 且映射中某 tab 启用 `ai_import_parse`，成功消息会附带 `import_ai_calls` / `import_ai_failures`
 
 地址 AI 二次修复（Gemini）：
 - 仅在 Google 直接验证失败时触发 AI 清洗地址并重试

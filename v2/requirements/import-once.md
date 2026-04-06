@@ -17,7 +17,7 @@
 2. **`--force-reimport`**：忽略导入锁再次导入；**`APP_ENV=prod` 时禁止**。
 3. **`--reset`**：清空 `load` 与导入锁后再导入；**prod 禁止**。
 4. **`--trigger`**：写入 `load_sync_log` 的标签字符串，便于区分 initial/manual/cli。
-5. **输出**：打印 `rows_read` / `rows_written` / `rows_skipped` 等统计，方便 CI 日志。
+5. **输出**：打印 `rows_read` / `rows_written` / `rows_skipped` 及 `import_ai_calls` / `import_ai_failures`（见 `sheet-import.md` AI 导入补缺）。
 
 ## 非功能约束
 
