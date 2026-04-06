@@ -1,0 +1,67 @@
+spreadsheet_id: "https://docs.google.com/spreadsheets/d/1cuPIPfP7WYpBI33UVovFAI7wzH8lAOp3PqGOp8idZfU/edit?gid=589486198#gid=589486198"
+
+tabs:
+  - key: quote
+    worksheet: "报价 quote"
+    data_start_row: 2
+    key_column_letter: "C"
+    use_color_status: true
+    color_status_map:
+      red: ordered
+      green: ready_to_pick
+    status:
+      mode: fixed
+      value: quote
+      default: quote
+    trouble_case:
+      column_letter: ""
+      truthy: ["1", "true", "yes", "y", "trouble"]
+
+  - key: order
+    worksheet: "下单 BOL need booking"
+    data_start_row: 2
+    key_column_letter: "C"
+    use_color_status: true
+    # A 列底色：红→ordered，绿→ready_to_pick。找到车用 status=carrier_assigned，需 mapping 新颜色/列或别处写入（导入默认不产生）。
+    color_status_map:
+      red: ordered
+      green: ready_to_pick
+    status:
+      mode: fixed
+      value: ordered
+      default: ordered
+    trouble_case:
+      column_letter: ""
+      truthy: ["1", "true", "yes", "y", "trouble"]
+
+  - key: complete
+    worksheet: "POD 收钱"
+    data_start_row: 2
+    key_column_letter: "C"
+    use_color_status: false
+    status:
+      mode: fixed
+      value: complete
+      default: complete
+    trouble_case:
+      column_letter: ""
+      truthy: ["1", "true", "yes", "y", "trouble"]
+
+  - key: cancel
+    worksheet: "取消订单/Cancellations"
+    data_start_row: 2
+    key_column_letter: "C"
+    use_color_status: false
+    status:
+      mode: fixed
+      value: cancel
+      default: cancel
+    trouble_case:
+      column_letter: ""
+      truthy: ["1", "true", "yes", "y", "trouble"]
+
+# 仅导入已定义列：A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,U
+# I=起始地, J=consignee_contact, K=目的地。导入不写 shipper_info / consignee_info；地址校验成功后以 Gemini 为主抽取（失败则规则），见 AI_PARTY_EXTRACT_*。
+# 明确不处理：Q,R,S，以及其它未定义列。
+# 你可手动调整 data_start_row / worksheet / key_column_letter。
+

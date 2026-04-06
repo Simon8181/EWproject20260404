@@ -1,0 +1,58 @@
+Order Workflow Requirement Draft
+
+Purpose
+This document captures the current Google Sheet workflow so the project can implement the same business process correctly.
+
+Status Model
+
+A) Load Status (operational readiness)
+- not_ready
+- ready_to_pick
+- picked
+- complete
+- trouble
+
+B) Order Status (business and financial lifecycle)
+- pending_quote
+- quoted
+- ordered_waiting_truck
+- truck_found
+- cancelled
+- pod_received
+- invoice_received_from_driver
+- invoice_sent_to_customer (yes/no)
+- customer_paid (yes/no)
+- driver_paid (yes/no)
+
+Important Business Rule
+- ready_to_pick is independent from truck_found.
+- In other words, "ready to pick" does not mean a truck has been found.
+
+Workflow by Stage
+
+1) Quote Stage (Quote tab)
+- When a customer requests a quote, a row is created in the Quote tab.
+- Planned quote workflow: pending_quote -> quoted -> ordered_waiting_truck.
+- This stage can also confirm whether the load is ready_to_pick.
+- TODO: finalize quoting requirement details.
+
+2) Order Stage (Order tab)
+- After the customer confirms the price, the order is considered confirmed.
+- In the current Sheet process, column A becomes red and the row is copied to the Order tab.
+- Main order progression in this stage: ordered_waiting_truck -> truck_found.
+- ready_to_pick remains a separate signal and should not be used as truck_found.
+
+3) Pickup/Delivery/POD/Invoice Stage
+- After driver pickup, there is currently no explicit Sheet action for that event.
+- The web application should provide tracking/confirmation for this stage.
+- After delivery and POD confirmation, the row is moved to the POD tab.
+- Then finance follow-up continues:
+  - wait for driver POD and driver invoice
+  - send invoice to customer
+  - collect customer payment
+  - pay the driver
+
+Implementation Guidance for the Project
+- Keep load_status and order_status as two independent tracks.
+- Do not infer truck_found from ready_to_pick.
+- Ensure POD/invoice/payment checkpoints are explicitly tracked in the web workflow, even if the Sheet process is currently manual for some transitions.
