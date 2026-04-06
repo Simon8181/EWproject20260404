@@ -7,11 +7,14 @@ from pathlib import Path
 
 
 ALLOWED_STATUS = (
-    "quote",
+    "pending_quote",
+    "quoted",
+    "not_ready",
     "ordered",
-    "ready_to_pick",
     "carrier_assigned",
+    "ready_to_pick",
     "picked",
+    "unloaded",
     "complete",
     "cancel",
 )
@@ -56,6 +59,14 @@ def _load_create_table_ddl(table_name: str) -> str:
           origin_normalized TEXT NOT NULL DEFAULT '',
           dest_normalized TEXT NOT NULL DEFAULT '',
           ai_notes TEXT NOT NULL DEFAULT '',
+          pickup_eta TEXT NOT NULL DEFAULT '',
+          delivery_eta TEXT NOT NULL DEFAULT '',
+          pickup_tz TEXT NOT NULL DEFAULT '',
+          delivery_tz TEXT NOT NULL DEFAULT '',
+          carrier_note TEXT NOT NULL DEFAULT '',
+          cargo_ready INTEGER NOT NULL DEFAULT 0 CHECK (cargo_ready IN (0,1)),
+          operator_updated_by TEXT NOT NULL DEFAULT '',
+          operator_updated_at TEXT NOT NULL DEFAULT '',
           source_tabs TEXT NOT NULL DEFAULT '',
           first_seen_at TEXT NOT NULL,
           last_seen_at TEXT NOT NULL,
@@ -65,6 +76,13 @@ def _load_create_table_ddl(table_name: str) -> str:
         """
 
 
+def _load_check_needs_rebuild(sql: str) -> bool:
+    for token in ("pending_quote", "quoted", "not_ready", "unloaded"):
+        if token not in sql:
+            return True
+    return False
+
+
 def _migrate_load_status_if_needed(conn: sqlite3.Connection) -> None:
     row = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='load'"
@@ -72,18 +90,29 @@ def _migrate_load_status_if_needed(conn: sqlite3.Connection) -> None:
     if not row or not row["sql"]:
         return
     sql = str(row["sql"] or "")
-    if "carrier_assigned" in sql:
+    if not _load_check_needs_rebuild(sql):
         return
     cols = [
         str(r["name"]) for r in conn.execute("PRAGMA table_info(load)").fetchall()
     ]
     if not cols:
         return
+    select_parts: list[str] = []
+    for c in cols:
+        if c == "status":
+            select_parts.append(
+                "CASE "
+                "WHEN TRIM(COALESCE(status,'')) = 'quote' THEN 'pending_quote' "
+                "ELSE status END"
+            )
+        else:
+            select_parts.append(c)
     collist = ",".join(cols)
+    exprlist = ",".join(select_parts)
     conn.execute("BEGIN IMMEDIATE")
     try:
         conn.execute(_load_create_table_ddl("load__new"))
-        conn.execute(f"INSERT INTO load__new ({collist}) SELECT {collist} FROM load")
+        conn.execute(f"INSERT INTO load__new ({collist}) SELECT {exprlist} FROM load")
         conn.execute("DROP TABLE load")
         conn.execute("ALTER TABLE load__new RENAME TO load")
     except Exception:
@@ -139,6 +168,14 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
           origin_normalized TEXT NOT NULL DEFAULT '',
           dest_normalized TEXT NOT NULL DEFAULT '',
           ai_notes TEXT NOT NULL DEFAULT '',
+          pickup_eta TEXT NOT NULL DEFAULT '',
+          delivery_eta TEXT NOT NULL DEFAULT '',
+          pickup_tz TEXT NOT NULL DEFAULT '',
+          delivery_tz TEXT NOT NULL DEFAULT '',
+          carrier_note TEXT NOT NULL DEFAULT '',
+          cargo_ready INTEGER NOT NULL DEFAULT 0 CHECK (cargo_ready IN (0,1)),
+          operator_updated_by TEXT NOT NULL DEFAULT '',
+          operator_updated_at TEXT NOT NULL DEFAULT '',
           source_tabs TEXT NOT NULL DEFAULT '',
           first_seen_at TEXT NOT NULL,
           last_seen_at TEXT NOT NULL,
@@ -233,6 +270,14 @@ def _ensure_load_columns(conn: sqlite3.Connection) -> None:
         "origin_normalized": "TEXT NOT NULL DEFAULT ''",
         "dest_normalized": "TEXT NOT NULL DEFAULT ''",
         "ai_notes": "TEXT NOT NULL DEFAULT ''",
+        "pickup_eta": "TEXT NOT NULL DEFAULT ''",
+        "delivery_eta": "TEXT NOT NULL DEFAULT ''",
+        "pickup_tz": "TEXT NOT NULL DEFAULT ''",
+        "delivery_tz": "TEXT NOT NULL DEFAULT ''",
+        "carrier_note": "TEXT NOT NULL DEFAULT ''",
+        "cargo_ready": "INTEGER NOT NULL DEFAULT 0 CHECK (cargo_ready IN (0,1))",
+        "operator_updated_by": "TEXT NOT NULL DEFAULT ''",
+        "operator_updated_at": "TEXT NOT NULL DEFAULT ''",
     }
     for col, ddl in wanted.items():
         if col in existing:
@@ -299,6 +344,31 @@ def clear_load_only(conn: sqlite3.Connection) -> int:
     except sqlite3.OperationalError:
         pass
     return int(cur.rowcount or 0)
+
+
+def clear_load_quote_only(conn: sqlite3.Connection) -> int:
+    """Remove load rows that belong to the quote tab (source_tabs contains ``quote``)."""
+    rows = conn.execute(
+        """
+        SELECT quote_no FROM load
+        WHERE instr(',' || COALESCE(TRIM(source_tabs), '') || ',', ',quote,') > 0
+        """
+    ).fetchall()
+    qns = [str(r["quote_no"]) for r in rows]
+    for qn in qns:
+        conn.execute("DELETE FROM load_validation_log WHERE quote_no = ?", (qn,))
+    cur = conn.execute(
+        """
+        DELETE FROM load
+        WHERE instr(',' || COALESCE(TRIM(source_tabs), '') || ',', ',quote,') > 0
+        """
+    )
+    conn.commit()
+    try:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except sqlite3.OperationalError:
+        pass
+    return len(qns) if qns else int(cur.rowcount or 0)
 
 
 def has_running_validation_job(conn: sqlite3.Connection) -> bool:

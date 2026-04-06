@@ -15,14 +15,28 @@ _SCOPES = ("https://www.googleapis.com/auth/spreadsheets.readonly",)
 
 
 STATUS_PRIORITY = {
-    "quote": 1,
-    "ordered": 2,
-    "ready_to_pick": 3,
-    "carrier_assigned": 4,
-    "picked": 5,
-    "complete": 6,
-    "cancel": 7,
+    "pending_quote": 1,
+    "quoted": 2,
+    "not_ready": 3,
+    "ordered": 4,
+    "carrier_assigned": 5,
+    "ready_to_pick": 6,
+    "picked": 7,
+    "unloaded": 8,
+    "complete": 9,
+    "cancel": 10,
 }
+
+_LOAD_WEB_TOUCHED_SQL = """(
+  trim(coalesce(load.pickup_eta,'')) != ''
+  OR trim(coalesce(load.delivery_eta,'')) != ''
+  OR trim(coalesce(load.pickup_tz,'')) != ''
+  OR trim(coalesce(load.delivery_tz,'')) != ''
+  OR trim(coalesce(load.carrier_note,'')) != ''
+  OR coalesce(load.cargo_ready, 0) != 0
+  OR trim(coalesce(load.operator_updated_at,'')) != ''
+  OR trim(coalesce(load.operator_updated_by,'')) != ''
+)"""
 
 
 @dataclass
@@ -70,8 +84,26 @@ def _resolve_status(tab: TabConfig, row: dict[str, str]) -> str:
         for key, mapped in tab.status_map.items():
             if key and key in text and mapped in ALLOWED_STATUS:
                 return mapped
-        return tab.status_default if tab.status_default in ALLOWED_STATUS else "quote"
-    return tab.status_default if tab.status_default in ALLOWED_STATUS else "quote"
+        return (
+            tab.status_default if tab.status_default in ALLOWED_STATUS else "pending_quote"
+        )
+    return (
+        tab.status_default if tab.status_default in ALLOWED_STATUS else "pending_quote"
+    )
+
+
+def _compute_row_status(tab: TabConfig, row: dict[str, str]) -> str:
+    color_key = row.get("_A_COLOR", "").strip().lower()
+    if tab.key == "quote" and tab.use_color_status and not color_key:
+        p = row.get("P", "").strip()
+        u = row.get("U", "").strip()
+        return "pending_quote" if (not p and not u) else "quoted"
+    status = _resolve_status(tab, row)
+    if tab.use_color_status and color_key in tab.color_status_map:
+        mapped = tab.color_status_map[color_key]
+        if mapped in ALLOWED_STATUS:
+            status = _higher_priority_status(status, mapped)
+    return status
 
 
 def _resolve_trouble_case(tab: TabConfig, row: dict[str, str]) -> bool:
@@ -179,12 +211,7 @@ def run_one_time_import(
             if not quote_no:
                 stats.rows_skipped += 1
                 continue
-            status = _resolve_status(tab, row)
-            color_key = row.get("_A_COLOR", "").strip().lower()
-            if tab.use_color_status and color_key in tab.color_status_map:
-                mapped = tab.color_status_map[color_key]
-                if mapped in ALLOWED_STATUS:
-                    status = _higher_priority_status(status, mapped)
+            status = _compute_row_status(tab, row)
             is_trouble = _resolve_trouble_case(tab, row)
             prev = aggregate.get(quote_no)
             if not prev:
@@ -244,7 +271,7 @@ def run_one_time_import(
         for quote_no, item in aggregate.items():
             source_tabs = ",".join(sorted(item["source_tabs"]))
             conn.execute(
-                """
+                f"""
                 INSERT INTO load (
                   quote_no, status, is_trouble_case,
                   customer_name, note_d_raw, note_e_raw, note_f_raw, pieces_raw, commodity_desc,
@@ -256,7 +283,10 @@ def run_one_time_import(
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(quote_no) DO UPDATE SET
-                  status = excluded.status,
+                  status = CASE
+                    WHEN {_LOAD_WEB_TOUCHED_SQL} THEN load.status
+                    ELSE excluded.status
+                  END,
                   is_trouble_case = excluded.is_trouble_case,
                   customer_name = excluded.customer_name,
                   note_d_raw = excluded.note_d_raw,

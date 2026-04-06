@@ -1,0 +1,14 @@
+# Secrets and local overrides — never commit
+config/.env
+config/.env.local
+config/service_account.json
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Local SQLite (optional; adjust if you version a seed DB)
+data/*.sqlite3
+data/*.sqlite3-*

@@ -1,58 +1,122 @@
-Order Workflow Requirement Draft
+# 订单/运输需求简版
 
-Purpose
-This document captures the current Google Sheet workflow so the project can implement the same business process correctly.
+面向开发：双轨状态、Sheet 能推什么、网页主数据与提醒规则。
 
-Status Model
+---
 
-A) Load Status (operational readiness)
-- not_ready
-- ready_to_pick
-- picked
-- complete
-- trouble
+## 1. 双轨状态（并行，勿混）
 
-B) Order Status (business and financial lifecycle)
-- pending_quote
-- quoted
-- ordered_waiting_truck
-- truck_found
-- cancelled
-- pod_received
-- invoice_received_from_driver
-- invoice_sent_to_customer (yes/no)
-- customer_paid (yes/no)
-- driver_paid (yes/no)
+**Load（运输动作）**  
+`not_ready` → `ready_to_pick`（网页确认）→ `picked`（离提货点/在途开始）→ `unloaded`（送达卸货完成）  
+异常：`trouble`。`complete` 弱化，物理段以 `unloaded` 为结束。
 
-Important Business Rule
-- ready_to_pick is independent from truck_found.
-- In other words, "ready to pick" does not mean a truck has been found.
+**Order（业务/财务）**  
+`pending_quote` → `quoted` → `ordered_waiting_truck` → `truck_found` → … → `cancelled`  
+财务相关：`pod_received`、司机账单、给客户开票、客户付款、付司机等（暂不同步 Sheet，网页维护）。
 
-Workflow by Stage
+**硬规则**  
+- `ready_to_pick` ≠ `truck_found`。  
+- 可先 `truck_found` 再 `ready_to_pick`（先锁车、货未 ready 可）。
 
-1) Quote Stage (Quote tab)
-- When a customer requests a quote, a row is created in the Quote tab.
-- Planned quote workflow: pending_quote -> quoted -> ordered_waiting_truck.
-- This stage can also confirm whether the load is ready_to_pick.
-- TODO: finalize quoting requirement details.
+---
 
-2) Order Stage (Order tab)
-- After the customer confirms the price, the order is considered confirmed.
-- In the current Sheet process, column A becomes red and the row is copied to the Order tab.
-- Main order progression in this stage: ordered_waiting_truck -> truck_found.
-- ready_to_pick remains a separate signal and should not be used as truck_found.
+## 2. Sheet 导入（仅能从表推导的部分）
 
-3) Pickup/Delivery/POD/Invoice Stage
-- After driver pickup, there is currently no explicit Sheet action for that event.
-- The web application should provide tracking/confirmation for this stage.
-- After delivery and POD confirmation, the row is moved to the POD tab.
-- Then finance follow-up continues:
-  - wait for driver POD and driver invoice
-  - send invoice to customer
-  - collect customer payment
-  - pay the driver
+| 场景 | 规则 |
+|------|------|
+| A 列红 | → `ordered`（待找车） |
+| A 列绿 | → `carrier_assigned`（= 已找到车 / `truck_found`） |
+| 绿 ≠ `ready_to_pick` | 禁止用颜色替代可提货确认 |
 
-Implementation Guidance for the Project
-- Keep load_status and order_status as two independent tracks.
-- Do not infer truck_found from ready_to_pick.
-- Ensure POD/invoice/payment checkpoints are explicitly tracked in the web workflow, even if the Sheet process is currently manual for some transitions.
+**仅 quote 有无色**  
+- P、U 皆空 → `pending_quote`  
+- 有报价（P 或 U 也非空）且未下单 → `quoted`  
+
+财务节点：**暂不从 Sheet 读**。
+
+---
+
+## 3. 主流程（三段）
+
+1. **Quote**：询价/报价 → 可跟「货是否 ready」的人工确认（仅网页）。  
+2. **Order**：下单后 A 红待找车、A 绿已找到车。  
+3. **执行与闭环**：`picked` → `unloaded`；POD/对账在以网页为准的流程里跟。
+
+---
+
+## 4. 数据主来源与 Sheet
+
+- **真相源**：网页（`ready_to_pick`、提货/送达 ETA、时区、`picked`、`unloaded` 等）。  
+- **Sheet**：只读备份；**手动点导入**同步。  
+- **重导入**：网页已填字段优先，勿覆盖（字段清单实现时列）。  
+- 长期：**大概率弱化或停用 Sheet**。
+
+---
+
+## 5. 运营与提醒
+
+| 项 | 规则 |
+|----|------|
+| `ready_to_pick` | 仅网页确认；报价起就要问客户/提货点，防空跑 |
+| `picked` | 仅网页确认；需防漏提醒 |
+| 提货 ETA | 司机提供；仅网页+库；时区=提货地址时区（先 Google，失败则**必须手选时区**后才能存 ETA 并开提醒） |
+| 送达 ETA | 单独字段；时区=卸货地址或手选（与提货同套规则） |
+| 超提货 ETA 未 `picked` | 浏览器通知，每 **30 分钟**；满 **24h** 停通知改列表强提示；无夜间静音 |
+| 标 `picked` | 停当前轮提醒；若改回未离点，提醒可再触发 |
+| 承运是否「已接受」 | 不拆状态，用备注/字段记 |
+| 审计 MVP | 仅记最后修改人 + 时间 |
+
+---
+
+## 6. 列表筛选（示例）
+
+- 待找车：`ordered`  
+- 已找到车：`carrier_assigned`  
+- 运输中（已离点）：`picked`  
+- 全部：含 `ready_to_pick`、`unloaded` 等
+
+---
+
+## 7. 与代码枚举映射（备忘）
+
+- 表侧：`ordered`、`carrier_assigned` 等与库内 `load.status` 对齐；`pending_quote`/`quoted` 若库仍为 `quote` 等，实现时做映射表即可。
+
+---
+
+## 附录 A — text1 ↔ DB 定稿映射（单状态列）
+
+**原则**：每笔 load **只有一列** `load.status`（`TEXT`，枚举 CHECK）。Order 侧 `pending_quote` / `quoted` / `ordered_waiting_truck` / `truck_found` **不另建第二列**，全部映射到同一 `load.status`（及必要时的报价细分枚举）。
+
+| text1 概念 | `load.status` | 说明 |
+|------------|---------------|------|
+| Quote：P/U 皆空、未报价 | `pending_quote` | 仅 quote 表无 A 列色时由导入推导 |
+| Quote：有 P 或 U | `quoted` | 同上 |
+| 遗留库 `quote` | → `pending_quote` | 迁移时重写 |
+| `ordered_waiting_truck` / 待找车 | `ordered` | A 红、或 order 默认 |
+| `truck_found` / 已找到车 | `carrier_assigned` | A 绿；**禁止**绿映射到 `ready_to_pick` |
+| 货未 ready（仅网页） | `not_ready` | 可选网页标记；Sheet 不写入 |
+| `ready_to_pick` | `ready_to_pick` | 仅网页确认可提货 |
+| 离提货点 / 在途 | `picked` | 仅网页确认 |
+| 卸货完成 | `unloaded` | 物理段结束；弱化 `complete` |
+| `trouble` | `is_trouble_case=1` | 与状态正交 |
+| `complete` | `complete` | **保留读**；新业务流以 `unloaded` 收尾；实现上避免再从 Sheet **新写入** `complete`（仅历史/complete tab 导入） |
+| 取消 | `cancel` | cancel tab |
+
+**双轨不混**：`ready_to_pick` ≠ `truck_found`；允许先 `carrier_assigned` 后 `ready_to_pick`。
+
+**网页真相源列**（导入在「已有人工痕迹」时不覆盖 `status`）：  
+`pickup_eta`、`delivery_eta`、`pickup_tz`、`delivery_tz`、`carrier_note`、`cargo_ready`、`operator_updated_at`、`operator_updated_by`（任一无默认空/非零即视为网页已维护）。
+
+---
+
+## 附录 B — Sheet 重导入与 `status` 保护
+
+在 `sheet_import` 的 `ON CONFLICT DO UPDATE` 中：若附录 A 所列**网页真相源列**任一在库中已非空（`cargo_ready` 非 0、或 `operator_*` 已填写等），则 **保留原 `load.status`**，不用本次 Sheet 推导结果覆盖；其余列仍按导入语句更新。
+
+---
+
+## 附录 C — Debug 提货提醒（浏览器）
+
+- 页面加载后每分钟轮询 `/debug/api/reminder-candidates`；超 `pickup_eta` 且状态尚未 `picked`/`unloaded`/`complete`/`cancel` 时，在通知权限为 `granted` 下每 **30 分钟**（可用 URL 参数 `reminder_interval_ms` 缩短做开发验证）触发一次 `Notification`。
+- 自**首次**就该票触发通知起满 **24 小时**后不再弹通知（仍为列表行浅色高亮「ETA 已过」兜底）。
+- 标为 `picked` 后该票不再出现在候选 API 中，轮次停止；若状态回退为未离点，可再次进入候选（本地 `localStorage` 键仍可能沿用旧首轮时间戳，极端情况可清站点数据）。

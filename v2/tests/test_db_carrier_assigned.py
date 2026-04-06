@@ -71,6 +71,43 @@ class DbCarrierAssignedTest(unittest.TestCase):
         ).fetchone()
         self.assertEqual(row["status"], "carrier_assigned")
 
+    def test_migration_maps_legacy_quote_status(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        check_old = ",".join(
+            f"'{s}'"
+            for s in (
+                "quote",
+                "ordered",
+                "ready_to_pick",
+                "carrier_assigned",
+                "picked",
+                "complete",
+                "cancel",
+            )
+        )
+        check_new = _load_status_check_in_clause()
+        legacy_ddl = _load_create_table_ddl("load").replace(
+            f"CHECK (status IN ({check_new}))",
+            f"CHECK (status IN ({check_old}))",
+        )
+        conn.executescript(legacy_ddl)
+        ts = now_iso()
+        conn.execute(
+            """
+            INSERT INTO load (
+              quote_no, status, first_seen_at, last_seen_at, created_at, updated_at
+            ) VALUES (?, 'quote', ?, ?, ?, ?)
+            """,
+            ("q-legacy", ts, ts, ts, ts),
+        )
+        conn.commit()
+        ensure_schema(conn)
+        row = conn.execute(
+            "SELECT status FROM load WHERE quote_no = ?", ("q-legacy",)
+        ).fetchone()
+        self.assertEqual(row["status"], "pending_quote")
+
 
 if __name__ == "__main__":
     unittest.main()

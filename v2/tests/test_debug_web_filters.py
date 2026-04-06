@@ -14,13 +14,15 @@ class DebugWebOrderFilterTest(unittest.TestCase):
 
     def test_filter_waiting(self) -> None:
         frag = _order_load_state_status_filter("waiting")
-        self.assertEqual(frag, ("status IN (?, ?)", ("ordered", "ready_to_pick")))
+        self.assertEqual(frag, ("status = ?", ("ordered",)))
 
     def test_filter_found(self) -> None:
         frag = _order_load_state_status_filter("found")
-        self.assertEqual(
-            frag, ("status IN (?, ?)", ("carrier_assigned", "picked"))
-        )
+        self.assertEqual(frag, ("status = ?", ("carrier_assigned",)))
+
+    def test_filter_transit(self) -> None:
+        frag = _order_load_state_status_filter("transit")
+        self.assertEqual(frag, ("status = ?", ("picked",)))
 
     def test_filter_unknown_none(self) -> None:
         self.assertIsNone(_order_load_state_status_filter("unknown"))
@@ -33,6 +35,7 @@ class DebugWebNormalizeLoadStateTest(unittest.TestCase):
         self.assertIsNone(_normalize_order_load_state("all"))
         self.assertEqual(_normalize_order_load_state("waiting"), "waiting")
         self.assertEqual(_normalize_order_load_state(" FOUND "), "found")
+        self.assertEqual(_normalize_order_load_state("transit"), "transit")
 
 
 if __name__ == "__main__":

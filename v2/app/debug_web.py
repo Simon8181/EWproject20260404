@@ -2,19 +2,24 @@ from __future__ import annotations
 
 import html
 import json
+import re
 import threading
+from datetime import datetime, timezone
 from urllib.parse import urlencode
 
 from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from .db import (
+    ALLOWED_STATUS,
     clear_load_only,
+    clear_load_quote_only,
     create_validation_job,
     ensure_schema,
     get_validation_job,
     has_running_validation_job,
     is_import_done,
+    now_iso,
     open_db,
 )
 from .mapping import load_mapping
@@ -25,8 +30,10 @@ from .validation_runner import (
     run_validation_job_thread,
     validation_start_lock,
 )
+from .quote_web import router as _quote_router
 
 app = FastAPI(title="EW v2 Debug", version="0.1.0")
+app.include_router(_quote_router)
 
 TAB_KEYS = ("quote", "order", "complete", "cancel")
 
@@ -37,24 +44,289 @@ _DEBUG_NO_CACHE_HEADERS = {
 
 def _order_load_state_status_filter(load_state: str | None) -> tuple[str, tuple[str, ...]] | None:
     """
-    Map UI state to SQL fragment and parameters.
-
-    待找车：尚未指派承运 / 未找到车（ordered、ready_to_pick）。
-    已找到：已找到车及之后（carrier_assigned、picked）。
+    text1 §6：待找车 `ordered`；已找到车 `carrier_assigned`；运输中 `picked`；
+    「全部」不加过滤（含 ready_to_pick、unloaded 等）。
     """
     v = (load_state or "").strip().lower()
     if v in ("", "all"):
         return None
     if v == "waiting":
-        return ("status IN (?, ?)", ("ordered", "ready_to_pick"))
+        return ("status = ?", ("ordered",))
     if v == "found":
-        return ("status IN (?, ?)", ("carrier_assigned", "picked"))
+        return ("status = ?", ("carrier_assigned",))
+    if v == "transit":
+        return ("status = ?", ("picked",))
     return None
 
 
 def _normalize_order_load_state(load_state: str | None) -> str | None:
     v = (load_state or "").strip().lower()
-    return v if v in ("waiting", "found") else None
+    return v if v in ("waiting", "found", "transit") else None
+
+
+def _pickup_eta_overdue(row: dict[str, str]) -> bool:
+    eta = str(row.get("pickup_eta") or "").strip()
+    if not eta:
+        return False
+    st = str(row.get("status") or "")
+    if st in ("picked", "unloaded", "complete", "cancel"):
+        return False
+    try:
+        iso = eta.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(iso)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp() < datetime.now(timezone.utc).timestamp()
+    except Exception:
+        return False
+
+
+def _city_zip_state_from_address(addr: str) -> str:
+    """
+    从 Geocode 常见格式或杂糅单行里解析 US：**City, ST ZIP**（逗号在市后，州+邮编）。
+    例：「..., Houston, TX 77001, USA」→「Houston, TX 77001」
+    """
+    t = (addr or "").strip()
+    if not t:
+        return ""
+    # 「… , City, ST 12345」
+    m = re.search(r",\s*([^,]+),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)\b", t, re.I)
+    if m:
+        city = m.group(1).strip()
+        st = m.group(2).upper()
+        z = m.group(3)
+        if re.match(r"^\d", city):
+            parts = [p.strip() for p in t.split(",") if p.strip()]
+            if len(parts) >= 3:
+                city = parts[-3]
+        return f"{city}, {st} {z}".strip()
+    # 无逗号片段时：若句末有 ST ZIP，前一词可当 city
+    m2 = re.search(
+        r"([A-Za-z0-9\s\.\-]+?)\s+([A-Z]{2})\s+(\d{5}(?:-\d{4})?)\s*$", t, re.I
+    )
+    if m2:
+        city = m2.group(1).strip().rstrip(",")
+        if len(city) > 48:
+            city = city[-48:].lstrip()
+        st = m2.group(2).upper()
+        z = m2.group(3)
+        if city and not re.match(r"^\d+\s*$", city):
+            return f"{city}, {st} {z}".strip()
+        return f"{st} {z}"
+    # 仅 ST + ZIP
+    m3 = re.search(r"\b([A-Z]{2})\s+(\d{5}(?:-\d{4})?)\b", t, re.I)
+    if m3:
+        return f"{m3.group(1).upper()} {m3.group(2)}"
+    return ""
+
+
+def _route_summary_collapsed(r: dict[str, str]) -> str:
+    o = (r.get("origin_normalized") or "").strip() or (
+        r.get("ship_from_raw") or ""
+    ).strip()
+    d = (r.get("dest_normalized") or "").strip() or (
+        r.get("ship_to_raw") or ""
+    ).strip()
+    lo = _city_zip_state_from_address(o)
+    ld = _city_zip_state_from_address(d)
+    if lo or ld:
+        return f"{lo or '—'} → {ld or '—'}"
+    return ""
+
+
+def _load_tab_detail_dl(r: dict[str, str]) -> str:
+    """折叠展开后的字段列表（与旧版表格列一致）。"""
+
+    def txt(key: str, maxlen: int | None = None) -> str:
+        v = r.get(key)
+        if v is None:
+            s = ""
+        else:
+            s = str(v)
+        if maxlen is not None and len(s) > maxlen:
+            s = s[:maxlen] + "…"
+        return s
+
+    trouble = "Y" if int(r.get("is_trouble_case") or 0) else ""
+    cargo = "Y" if int(r.get("cargo_ready") or 0) else ""
+    validate_y = "Y" if int(r.get("validate_ok") or 0) else ""
+    ai_retry_y = "Y" if int(r.get("used_ai_retry") or 0) else ""
+    mile = (
+        txt("distance_miles")
+        if r.get("distance_miles") is not None
+        else ""
+    )
+    ai_conf = (
+        txt("ai_confidence")
+        if r.get("ai_confidence") is not None
+        else ""
+    )
+
+    pairs: list[tuple[str, str]] = [
+        ("quote_no", txt("quote_no")),
+        ("status", txt("status")),
+        ("trouble", trouble),
+        ("customer", txt("customer_name")),
+        ("commodity", txt("commodity_desc")),
+        ("ship_from", txt("ship_from_raw")),
+        ("J_consignee", txt("consignee_contact")),
+        ("shipper_info", txt("shipper_info", 500)),
+        ("consignee_info", txt("consignee_info", 800)),
+        ("ship_to", txt("ship_to_raw")),
+        ("weight", txt("weight_raw")),
+        ("dimension", txt("dimension_raw")),
+        ("volume", txt("volume_raw")),
+        ("mile", mile),
+        ("origin_type", txt("origin_land_use")),
+        ("dest_type", txt("dest_land_use")),
+        ("validate_ok", validate_y),
+        ("validate_error", txt("validate_error", 400)),
+        ("ai_retry", ai_retry_y),
+        ("ai_conf", ai_conf),
+        ("origin_norm", txt("origin_normalized", 240)),
+        ("dest_norm", txt("dest_normalized", 240)),
+        ("customer_quote", txt("customer_quote_raw")),
+        ("driver_rate", txt("driver_rate_raw")),
+        ("pickup_eta", txt("pickup_eta")),
+        ("delivery_eta", txt("delivery_eta")),
+        ("pickup_tz", txt("pickup_tz")),
+        ("delivery_tz", txt("delivery_tz")),
+        ("cargo_ready", cargo),
+        ("carrier_note", txt("carrier_note", 400)),
+        ("op_by", txt("operator_updated_by")),
+        ("op_at", txt("operator_updated_at")),
+        ("source_tabs", txt("source_tabs")),
+        ("updated_at", txt("updated_at")),
+    ]
+    parts = [
+        f"<dt>{html.escape(label)}</dt><dd>{html.escape(val)}</dd>"
+        for label, val in pairs
+    ]
+    return '<dl class="gf-detail-dl">' + "".join(parts) + "</dl>"
+
+
+def _load_table_interaction_script() -> str:
+    return r"""
+<script>
+(function () {
+  function toggle(summaryTr) {
+    var det = summaryTr.nextElementSibling;
+    if (!det || det.getAttribute("data-gf-detail") !== "1") return;
+    var btn = summaryTr.querySelector(".gf-expand-btn");
+    var expanding = det.hasAttribute("hidden");
+    if (expanding) {
+      det.removeAttribute("hidden");
+      summaryTr.setAttribute("aria-expanded", "true");
+      if (btn) btn.textContent = "\u25BC";
+    } else {
+      det.setAttribute("hidden", "");
+      summaryTr.setAttribute("aria-expanded", "false");
+      if (btn) btn.textContent = "\u25B6";
+    }
+  }
+  document.querySelectorAll("table.gf-load-table tbody").forEach(function (tb) {
+    tb.addEventListener("click", function (ev) {
+      var tr = ev.target.closest("tr.gf-load-summary");
+      if (!tr || !tb.contains(tr)) return;
+      toggle(tr);
+    });
+    tb.addEventListener("keydown", function (ev) {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      var tr = ev.target.closest("tr.gf-load-summary");
+      if (!tr || !tb.contains(tr)) return;
+      if (ev.target !== tr) return;
+      if (ev.key === " ") ev.preventDefault();
+      toggle(tr);
+    });
+  });
+})();
+</script>
+"""
+
+
+def _reminder_script_block() -> str:
+    return r"""
+<script>
+(function () {
+  const params = new URLSearchParams(location.search);
+  const REMINDER_MS = (function () {
+    const v = parseInt(params.get("reminder_interval_ms") || "", 10);
+    return Number.isFinite(v) && v > 0 ? v : 30 * 60 * 1000;
+  })();
+  const STOP_AFTER_MS = 24 * 60 * 60 * 1000;
+  const LS_FIRST = "ew_pickup_rem_first_ts_";
+  const LS_LAST = "ew_pickup_rem_last_ts_";
+
+  function parseDueAt(iso, tzHint) {
+    if (!iso || !String(iso).trim()) return null;
+    try {
+      const t = Date.parse(String(iso).replace(/Z$/, "+00:00"));
+      if (Number.isNaN(t)) return null;
+      return t;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function terminalStatus(st) {
+    return ["picked", "unloaded", "complete", "cancel"].indexOf(
+      String(st || "").trim()
+    ) >= 0;
+  }
+
+  async function poll() {
+    try {
+      if (!("Notification" in window)) return;
+      const perm = Notification.permission;
+      if (perm !== "granted" && perm !== "default") return;
+      const r = await fetch("/debug/api/reminder-candidates", { cache: "no-store" });
+      if (!r.ok) return;
+      const data = await r.json();
+      const items = data.items || [];
+      const now = Date.now();
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        const due = parseDueAt(it.pickup_eta, it.pickup_tz);
+        if (!due || now < due) continue;
+        if (terminalStatus(it.status)) continue;
+        const q = String(it.quote_no || "");
+        const kf = LS_FIRST + q;
+        const kl = LS_LAST + q;
+        let first = parseInt(localStorage.getItem(kf) || "0", 10);
+        if (!first || !Number.isFinite(first)) {
+          first = now;
+          localStorage.setItem(kf, String(first));
+        }
+        if (now - first > STOP_AFTER_MS) continue;
+        const last = parseInt(localStorage.getItem(kl) || "0", 10);
+        if (last && now - last < REMINDER_MS) continue;
+        if (perm === "default") {
+          await Notification.requestPermission();
+        }
+        if (Notification.permission === "granted") {
+          try {
+            new Notification("EW：提货 ETA 已过仍未 picked", {
+              body: q + "（" + String(it.pickup_eta || "") + "）",
+            });
+          } catch (e) {}
+        }
+        localStorage.setItem(kl, String(now));
+      }
+    } catch (e) {}
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function () {
+      poll();
+      setInterval(poll, 60000);
+    });
+  } else {
+    poll();
+    setInterval(poll, 60000);
+  }
+})();
+</script>
+"""
 
 
 def _conn():
@@ -68,6 +340,7 @@ def _render_layout(title: str, body: str) -> HTMLResponse:
     nav = (
         '<nav class="gf-nav" aria-label="主导航">'
         '<a href="/debug">Home</a>'
+        '<a href="/quote" target="_blank" rel="noopener noreferrer">AI 收集报价数据</a>'
         '<a href="/debug/tab/quote">quote</a>'
         '<a href="/debug/tab/order">order</a>'
         '<a href="/debug/tab/complete">complete</a>'
@@ -322,6 +595,52 @@ def _render_layout(title: str, body: str) -> HTMLResponse:
       font-size: 0.9em;
       font-family: ui-monospace, monospace;
     }}
+    tr.gf-row-overdue > td {{ background: #fff3e0; }}
+    table.gf-load-table tbody tr.gf-load-summary {{
+      cursor: pointer;
+    }}
+    table.gf-load-table tbody tr.gf-load-summary:focus-visible {{
+      outline: 2px solid var(--gf-primary);
+      outline-offset: -2px;
+    }}
+    table.gf-load-table tbody tr.gf-load-summary:hover td {{
+      background: #f5f5f5;
+    }}
+    table.gf-load-table tbody tr.gf-load-summary.gf-row-overdue:hover td {{
+      background: #ffe8cc;
+    }}
+    table.gf-load-table .gf-chev {{
+      width: 2rem;
+      text-align: center;
+      font-size: 12px;
+      color: var(--gf-muted);
+      user-select: none;
+    }}
+    table.gf-load-table tr.gf-load-detail td {{
+      padding: 14px 16px 18px;
+      background: #fafafa;
+      border-bottom: 1px solid var(--gf-border);
+    }}
+    .gf-detail-dl {{
+      display: grid;
+      grid-template-columns: 9.5rem 1fr;
+      gap: 6px 16px;
+      margin: 0;
+      font-size: 13px;
+    }}
+    .gf-detail-dl dt {{
+      margin: 0;
+      color: var(--gf-muted);
+      font-weight: 500;
+    }}
+    .gf-detail-dl dd {{
+      margin: 0;
+      word-break: break-word;
+    }}
+    .gf-sum-main {{ vertical-align: middle; line-height: 1.45; }}
+    .gf-sum-qno {{ font-weight: 500; }}
+    .gf-sum-route {{ font-size: 13px; }}
+    .gf-sum-sep {{ margin: 0 0.35em; }}
   </style>
 </head>
 <body class="gf-page">
@@ -337,6 +656,7 @@ def _render_layout(title: str, body: str) -> HTMLResponse:
       {body}
     </article>
   </main>
+{_reminder_script_block()}
 </body>
 </html>
 """
@@ -382,9 +702,12 @@ def debug_home(msg: str | None = None, err: str | None = None) -> HTMLResponse:
       <form method="post" action="/debug/actions/clear-load">
         <button type="submit" class="gf-btn gf-btn-danger">清空数据（仅 load）</button>
       </form>
-      <form method="post" action="/debug/actions/import">
-        <button type="submit" class="gf-btn gf-btn-primary">导入数据</button>
-      </form>
+      <div class="actions" style="margin:0;display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <form method="post" action="/debug/actions/import" style="display:inline;">
+          <button type="submit" class="gf-btn gf-btn-primary">导入数据</button>
+        </form>
+        <a class="gf-btn gf-btn-ghost" href="/quote" target="_blank" rel="noopener noreferrer">AI 收集报价数据</a>
+      </div>
     </div>
     """
     rows_html = "".join(
@@ -458,6 +781,34 @@ def debug_api_status() -> JSONResponse:
     )
 
 
+@app.get("/debug/api/reminder-candidates")
+def debug_api_reminder_candidates() -> JSONResponse:
+    conn, _ = _conn()
+    rows = conn.execute(
+        """
+        SELECT quote_no, status, pickup_eta, pickup_tz
+        FROM load
+        WHERE trim(pickup_eta) != ''
+          AND status NOT IN ('picked','unloaded','complete','cancel')
+        ORDER BY quote_no
+        LIMIT 500
+        """
+    ).fetchall()
+    items = [
+        {
+            "quote_no": str(r["quote_no"]),
+            "status": str(r["status"]),
+            "pickup_eta": str(r["pickup_eta"] or ""),
+            "pickup_tz": str(r["pickup_tz"] or ""),
+        }
+        for r in rows
+    ]
+    return JSONResponse(
+        {"items": items},
+        headers=dict(_DEBUG_NO_CACHE_HEADERS),
+    )
+
+
 @app.post("/debug/actions/clear-load")
 def action_clear_load() -> RedirectResponse:
     conn, _ = _conn()
@@ -465,6 +816,18 @@ def action_clear_load() -> RedirectResponse:
     q = urlencode({"msg": f"已清空 load 数据，共 {n} 行；导入锁已关闭，可再次导入。"})
     return RedirectResponse(
         url=f"/debug?{q}",
+        status_code=303,
+        headers=dict(_DEBUG_NO_CACHE_HEADERS),
+    )
+
+
+@app.post("/debug/actions/clear-load-quote-tab")
+def action_clear_load_quote_tab() -> RedirectResponse:
+    conn, _ = _conn()
+    n = clear_load_quote_only(conn)
+    q = urlencode({"msg": f"已清空 quote tab 相关 load 行（source_tabs 含 quote），共 {n} 条。"})
+    return RedirectResponse(
+        url="/debug/tab/quote?" + q,
         status_code=303,
         headers=dict(_DEBUG_NO_CACHE_HEADERS),
     )
@@ -492,6 +855,125 @@ def action_import() -> RedirectResponse:
     except Exception as e:
         q = urlencode({"err": f"导入失败: {e!s}"})
         return RedirectResponse(url=f"/debug?{q}", status_code=303)
+
+
+@app.post("/debug/actions/patch-load")
+def action_patch_load(
+    quote_no: str = Form(...),
+    return_tab: str = Form("order"),
+    status: str = Form(""),
+    pickup_eta: str = Form(""),
+    delivery_eta: str = Form(""),
+    pickup_tz: str = Form(""),
+    delivery_tz: str = Form(""),
+    carrier_note: str = Form(""),
+    cargo_ready: str = Form(""),
+    operator_name: str = Form(""),
+) -> RedirectResponse:
+    qn = (quote_no or "").strip()
+    safe_tab = return_tab if return_tab in TAB_KEYS else "order"
+    base = f"/debug/tab/{safe_tab}"
+    conn, _ = _conn()
+    cur = conn.execute(
+        """
+        SELECT pickup_eta, delivery_eta, pickup_tz, delivery_tz, carrier_note, cargo_ready
+        FROM load WHERE quote_no = ?
+        """,
+        (qn,),
+    ).fetchone()
+    if not cur:
+        q = urlencode({"err": f"未找到 quote_no：{qn}"})
+        return RedirectResponse(
+            url=f"{base}?{q}",
+            status_code=303,
+            headers=dict(_DEBUG_NO_CACHE_HEADERS),
+        )
+
+    pe_in = pickup_eta.strip()
+    de_in = delivery_eta.strip()
+    ptz_in = pickup_tz.strip()
+    dtz_in = delivery_tz.strip()
+    new_pe = pe_in if pe_in else str(cur["pickup_eta"] or "")
+    new_de = de_in if de_in else str(cur["delivery_eta"] or "")
+    new_ptz = ptz_in if ptz_in else str(cur["pickup_tz"] or "")
+    new_dtz = dtz_in if dtz_in else str(cur["delivery_tz"] or "")
+    cur_cn = str(cur["carrier_note"] or "")
+    cn_in = carrier_note.strip()
+    new_cn = cn_in if cn_in else cur_cn
+
+    if str(new_pe).strip() and not str(new_ptz).strip():
+        q = urlencode(
+            {"err": "已填写提货 ETA 时必须填写 pickup_tz（IANA），或先清空 ETA。"}
+        )
+        return RedirectResponse(
+            url=f"{base}?{q}",
+            status_code=303,
+            headers=dict(_DEBUG_NO_CACHE_HEADERS),
+        )
+    if str(new_de).strip() and not str(new_dtz).strip():
+        q = urlencode(
+            {"err": "已填写送达 ETA 时必须填写 delivery_tz（IANA），或先清空 ETA。"}
+        )
+        return RedirectResponse(
+            url=f"{base}?{q}",
+            status_code=303,
+            headers=dict(_DEBUG_NO_CACHE_HEADERS),
+        )
+
+    st = (status or "").strip()
+    if st and st not in ALLOWED_STATUS:
+        q = urlencode({"err": f"无效 status：{st}"})
+        return RedirectResponse(
+            url=f"{base}?{q}",
+            status_code=303,
+            headers=dict(_DEBUG_NO_CACHE_HEADERS),
+        )
+
+    cr_sel = (cargo_ready or "").strip()
+    if cr_sel == "":
+        cr = int(cur["cargo_ready"] or 0)
+    else:
+        cr = 1 if cr_sel == "1" else 0
+
+    op = (operator_name or "").strip() or "debug"
+    ts = now_iso()
+
+    fields = [
+        "pickup_eta = ?",
+        "delivery_eta = ?",
+        "pickup_tz = ?",
+        "delivery_tz = ?",
+        "carrier_note = ?",
+        "cargo_ready = ?",
+        "operator_updated_by = ?",
+        "operator_updated_at = ?",
+        "updated_at = ?",
+    ]
+    vals: list[object] = [
+        new_pe,
+        new_de,
+        new_ptz,
+        new_dtz,
+        new_cn,
+        cr,
+        op,
+        ts,
+        ts,
+    ]
+    if st:
+        fields.insert(0, "status = ?")
+        vals.insert(0, st)
+    conn.execute(
+        f"UPDATE load SET {', '.join(fields)} WHERE quote_no = ?",
+        tuple(vals + [qn]),
+    )
+    conn.commit()
+    q = urlencode({"msg": f"已更新 {qn}"})
+    return RedirectResponse(
+        url=f"{base}?{q}",
+        status_code=303,
+        headers=dict(_DEBUG_NO_CACHE_HEADERS),
+    )
 
 
 @app.post("/debug/actions/validate-address")
@@ -685,6 +1167,8 @@ def _tab_rows(tab_key: str, *, load_state: str | None = None) -> list[dict[str, 
                distance_miles, origin_land_use, dest_land_use, validate_ok, validate_error,
                used_ai_retry, ai_confidence, origin_normalized, dest_normalized,
                customer_quote_raw, driver_rate_raw,
+               pickup_eta, delivery_eta, pickup_tz, delivery_tz,
+               cargo_ready, carrier_note, operator_updated_by, operator_updated_at,
                source_tabs, updated_at
         FROM load
         WHERE instr(',' || source_tabs || ',', ',' || ? || ',') > 0
@@ -710,66 +1194,69 @@ def debug_tab_page(
             "<p class='err'>无效 tab key</p>"
             "<p><a class='gf-link' href='/debug'>返回 Debug 首页</a></p>",
         )
-    rows = _tab_rows(tab_key, load_state=load_state)
-    head = (
-        "<tr><th>quote_no</th><th>status</th><th>trouble</th><th>customer</th>"
-        "<th>commodity</th><th>ship_from</th><th>J_consignee</th><th>shipper_info</th><th>consignee_info</th><th>ship_to</th>"
-        "<th>weight</th><th>dimension</th><th>volume</th>"
-        "<th>mile</th><th>origin_type</th><th>dest_type</th><th>validate_ok</th><th>validate_error</th>"
-        "<th>ai_retry</th><th>ai_conf</th><th>origin_norm</th><th>dest_norm</th>"
-        "<th>customer_quote</th><th>driver_rate</th><th>source_tabs</th><th>updated_at</th></tr>"
-    )
-    body_rows = []
-    for r in rows:
-        body_rows.append(
-            "<tr>"
-            f"<td>{html.escape(str(r.get('quote_no','')))}</td>"
-            f"<td>{html.escape(str(r.get('status','')))}</td>"
-            f"<td>{'Y' if int(r.get('is_trouble_case') or 0) else ''}</td>"
-            f"<td>{html.escape(str(r.get('customer_name','')))}</td>"
-            f"<td>{html.escape(str(r.get('commodity_desc','')))}</td>"
-            f"<td>{html.escape(str(r.get('ship_from_raw','')))}</td>"
-            f"<td>{html.escape(str(r.get('consignee_contact','')))}</td>"
-            f"<td>{html.escape(str(r.get('shipper_info',''))[:100])}</td>"
-            f"<td>{html.escape(str(r.get('consignee_info',''))[:160])}</td>"
-            f"<td>{html.escape(str(r.get('ship_to_raw','')))}</td>"
-            f"<td>{html.escape(str(r.get('weight_raw','')))}</td>"
-            f"<td>{html.escape(str(r.get('dimension_raw','')))}</td>"
-            f"<td>{html.escape(str(r.get('volume_raw','')))}</td>"
-            f"<td>{html.escape(str(r.get('distance_miles','') if r.get('distance_miles') is not None else ''))}</td>"
-            f"<td>{html.escape(str(r.get('origin_land_use','')))}</td>"
-            f"<td>{html.escape(str(r.get('dest_land_use','')))}</td>"
-            f"<td>{'Y' if int(r.get('validate_ok') or 0) else ''}</td>"
-            f"<td>{html.escape(str(r.get('validate_error',''))[:120])}</td>"
-            f"<td>{'Y' if int(r.get('used_ai_retry') or 0) else ''}</td>"
-            f"<td>{html.escape(str(r.get('ai_confidence','') if r.get('ai_confidence') is not None else ''))}</td>"
-            f"<td>{html.escape(str(r.get('origin_normalized',''))[:80])}</td>"
-            f"<td>{html.escape(str(r.get('dest_normalized',''))[:80])}</td>"
-            f"<td>{html.escape(str(r.get('customer_quote_raw','')))}</td>"
-            f"<td>{html.escape(str(r.get('driver_rate_raw','')))}</td>"
-            f"<td>{html.escape(str(r.get('source_tabs','')))}</td>"
-            f"<td>{html.escape(str(r.get('updated_at','')))}</td>"
-            "</tr>"
-        )
-    empty_data_row = '<tr><td colspan="26" class="muted">暂无数据</td></tr>'
-    state = (load_state or "").strip().lower()
-    if tab_key == "order" and state not in ("", "all", "waiting", "found"):
+    if tab_key == "order":
+        raw_ls = (load_state or "").strip().lower()
+        if raw_ls in ("waiting", "found", "transit"):
+            state = raw_ls
+            ls = _normalize_order_load_state(load_state)
+        else:
+            state = "all"
+            ls = None
+    else:
         state = ""
-    state_label = {"": "全部", "all": "全部", "waiting": "待找车", "found": "已找到"}.get(
-        state, "全部"
+        ls = None
+
+    rows = _tab_rows(tab_key, load_state=ls)
+    head = (
+        "<tr>"
+        '<th class="gf-chev" scope="col"></th>'
+        '<th scope="col">单号 · 起止（City, ST ZIP）</th>'
+        "</tr>"
     )
+    body_rows: list[str] = []
+    for r in rows:
+        overdue = _pickup_eta_overdue(r)
+        sum_cls = "gf-load-summary"
+        if overdue:
+            sum_cls += " gf-row-overdue"
+        tip = "提货 ETA 已过仍未 picked · 点击展开/收起" if overdue else "点击展开/收起详情"
+        qn = html.escape(str(r.get("quote_no", "")))
+        route = _route_summary_collapsed(r)
+        route_html = (
+            '<span class="gf-sum-sep muted">·</span>'
+            f'<span class="gf-sum-route muted">{html.escape(route)}</span>'
+            if route
+            else ""
+        )
+        dl = _load_tab_detail_dl(r)
+        body_rows.append(
+            f"<tr class=\"{sum_cls}\" title=\"{html.escape(tip)}\" "
+            'tabindex="0" role="button" aria-expanded="false">'
+            '<td class="gf-chev"><span class="gf-expand-btn" aria-hidden="true">▶</span></td>'
+            f'<td class="gf-sum-main"><span class="gf-sum-qno">{qn}</span>{route_html}</td></tr>'
+            f"<tr class=\"gf-load-detail\" data-gf-detail=\"1\" hidden><td colspan=\"2\">{dl}</td></tr>"
+        )
+    empty_data_row = '<tr><td colspan="2" class="muted">暂无数据</td></tr>'
+    state_label = {
+        "all": "全部",
+        "waiting": "待找车",
+        "found": "已找到车",
+        "transit": "运输中",
+    }.get(state, "全部")
     order_filter = ""
     if tab_key == "order":
-        sel_all = state in ("", "all")
+        sel_all = state == "all"
         sel_wait = state == "waiting"
         sel_found = state == "found"
+        sel_tr = state == "transit"
         order_filter = (
             "<div class='gf-order-filter' role='region' aria-label='找车状态筛选'>"
-            "<div class='gf-order-filter__title'>找车状态（order 列表筛选）</div>"
+            "<div class='gf-order-filter__title'>找车状态（order 列表筛选，对齐 text1 §6）</div>"
             "<p class='muted' style='margin:0 0 10px;font-size:13px'>"
-            "待找车：<code class='gf-code'>ordered</code> 或 <code class='gf-code'>ready_to_pick</code>；"
-            "已找到：<code class='gf-code'>carrier_assigned</code>（找到车）或 <code class='gf-code'>picked</code>。"
-            "其它 status 请在「全部」查看。"
+            "待找车：<code class='gf-code'>ordered</code>；"
+            "已找到车：<code class='gf-code'>carrier_assigned</code>；"
+            "运输中：<code class='gf-code'>picked</code>。"
+            "「全部」包含 <code class='gf-code'>ready_to_pick</code>、<code class='gf-code'>unloaded</code> 等。"
             "</p>"
             "<div class='actions' style='margin:0; flex-wrap:wrap'>"
             f"<a class='gf-btn {'gf-btn-primary' if sel_all else 'gf-btn-ghost'}' "
@@ -777,17 +1264,29 @@ def debug_tab_page(
             f"<a class='gf-btn {'gf-btn-primary' if sel_wait else 'gf-btn-ghost'}' "
             "href='/debug/tab/order?load_state=waiting' style='text-decoration:none'>待找车</a>"
             f"<a class='gf-btn {'gf-btn-primary' if sel_found else 'gf-btn-ghost'}' "
-            "href='/debug/tab/order?load_state=found' style='text-decoration:none'>已找到</a>"
+            "href='/debug/tab/order?load_state=found' style='text-decoration:none'>已找到车</a>"
+            f"<a class='gf-btn {'gf-btn-primary' if sel_tr else 'gf-btn-ghost'}' "
+            "href='/debug/tab/order?load_state=transit' style='text-decoration:none'>运输中</a>"
             f"<span class='muted' style='margin-left:4px'>当前：<b>{html.escape(state_label)}</b></span>"
             "</div></div>"
         )
     validate_ls = ""
-    if tab_key == "order" and state in ("waiting", "found"):
+    if tab_key == "order" and state in ("waiting", "found", "transit"):
         validate_ls = (
             f'<input type="hidden" name="load_state" value="{html.escape(state)}"/>'
         )
+    clear_quote = ""
+    if tab_key == "quote":
+        clear_quote = (
+            '<form method="post" action="/debug/actions/clear-load-quote-tab">'
+            '<button type="submit" class="gf-btn gf-btn-danger" '
+            'title="删除 load 中 source_tabs 含 quote 的行（不影响 order/complete/cancel 等）">'
+            "清空数据</button>"
+            "</form>"
+        )
     actions = (
         '<div class="actions">'
+        f"{clear_quote}"
         f'<form method="post" action="/debug/actions/validate-address-tab">'
         f'<input type="hidden" name="tab_key" value="{html.escape(tab_key)}"/>'
         f"{validate_ls}"
@@ -795,15 +1294,20 @@ def debug_tab_page(
         "</form>"
         "</div>"
     )
+    tbody_html = "".join(body_rows) if body_rows else empty_data_row
     body = (
         _feedback_block(msg, err)
         + order_filter
         + actions
-        +
-        f"<p class='muted'>tab=<b>{html.escape(tab_key)}</b>，共 {len(rows)} 行（最多显示 1000）</p>"
+        + f"<p class='muted'>tab=<b>{html.escape(tab_key)}</b>，共 {len(rows)} 条（最多 1000）；"
+        "默认仅显示单号，点击行展开详情。</p>"
         "<div class='gf-table-wrap'>"
-        f"<table class='gf-table'><thead>{head}</thead><tbody>{''.join(body_rows) or empty_data_row}</tbody></table>"
-        "</div>"
+        "<table class='gf-table gf-load-table'><thead>"
+        + head
+        + "</thead><tbody>"
+        + tbody_html
+        + "</tbody></table></div>"
+        + _load_table_interaction_script()
     )
     return _render_layout(f"Debug Tab: {tab_key}", body)
 

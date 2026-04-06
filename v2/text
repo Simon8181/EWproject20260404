@@ -1,0 +1,7 @@
+两个状态：
+loadstatus：not ready，ready to pick，picked，complete，truble
+orderstatus：待报价，已报价，已下单（待找车），已找到车，取消，POD received，POD recived，invoice received，是否invoice客户，客户是否付款，我们是否付钱给司机
+这是我在Sheet中的工作流程，帮助你理解我们project开发需求
+1.客户有报价请求后会在quote里面有数据（todo： 报价需求）订单状态是待报价，已报价，已下单。（这个tab页的过程可以确认是否ready to pick）
+2.客户确认价格（已下单）后，A列标红，复制到下单tab，订单状态是待找车，已找到车（ready to pick 不影响找没找到车）
+3.司机提货后没有sheet操作，我们的网页需要确认，司机送到发POD确认后剪切到POD tab，等司机的POD，invoice，我们也要发invoice给客户，让客户付款

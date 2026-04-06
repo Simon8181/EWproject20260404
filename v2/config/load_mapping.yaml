@@ -8,11 +8,11 @@ tabs:
     use_color_status: true
     color_status_map:
       red: ordered
-      green: ready_to_pick
+      green: carrier_assigned
     status:
       mode: fixed
-      value: quote
-      default: quote
+      value: pending_quote
+      default: pending_quote
     trouble_case:
       column_letter: ""
       truthy: ["1", "true", "yes", "y", "trouble"]
@@ -22,10 +22,9 @@ tabs:
     data_start_row: 2
     key_column_letter: "C"
     use_color_status: true
-    # A 列底色：红→ordered，绿→ready_to_pick。找到车用 status=carrier_assigned，需 mapping 新颜色/列或别处写入（导入默认不产生）。
     color_status_map:
       red: ordered
-      green: ready_to_pick
+      green: carrier_assigned
     status:
       mode: fixed
       value: ordered

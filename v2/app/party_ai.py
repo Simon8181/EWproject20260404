@@ -47,7 +47,7 @@ def party_gemini_model() -> str:
         or os.environ.get("V2_AI_PARTY_EXTRACT_MODEL")
         or os.environ.get("AI_ADDRESS_MODEL")
         or os.environ.get("V2_AI_ADDRESS_MODEL")
-        or "gemini-2.0-flash"
+        or "gemini-2.5-flash"
     ).strip()
 
 
