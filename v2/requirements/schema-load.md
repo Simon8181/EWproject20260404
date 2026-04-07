@@ -15,7 +15,7 @@
 
 1. **单列状态**：每笔 load 仅 `load.status` 表达业务/运输阶段（见 `text1` 附录 A）。
 2. **枚举**：`status` 必须为下列之一：  
-   `pending_quote`、`quoted`、`not_ready`、`ordered`、`carrier_assigned`、`ready_to_pick`、`picked`、`unloaded`、`complete`、`cancel`。
+   `pending_quote`、`quoted`、`quote_no_customer_response`（Sheet 合并中「客户未回应报价」）、`not_ready`、`ordered`、`carrier_assigned`、`ready_to_pick`、`picked`、`unloaded`、`complete`、`cancel`。
 3. **遗留值**：历史数据中 `quote` 在迁移时统一改为 `pending_quote`。
 4. **迁移触发**：若当前 `load` 表 DDL 的 CHECK 中缺少本需求规定的任一状态关键字，则重建 `load` 表并复制数据（保留列集合与 `PRAGMA table_info` 顺序一致）。
 5. **运营扩展列**（与网页真相源一致，可为空默认值）：  

@@ -11,6 +11,5 @@
 | `ops-fields.md` | 运营字段、`patch-load`、导入保护 |
 | `import-once.md` | `import_once` CLI |
 | `party-ai.md` | 参与方/地址 AI 抽取 |
-| `quote-ai-collect.md` | AI 收集报价数据（对话页 `/quote`、写 `load`） |
 
 产品总述仍见 `v2/text1`。

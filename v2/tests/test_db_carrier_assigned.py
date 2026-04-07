@@ -31,6 +31,25 @@ class DbCarrierAssignedTest(unittest.TestCase):
         ).fetchone()
         self.assertEqual(row["status"], "carrier_assigned")
 
+    def test_fresh_schema_accepts_quote_no_customer_response(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        ensure_schema(conn)
+        ts = now_iso()
+        conn.execute(
+            """
+            INSERT INTO load (
+              quote_no, status, first_seen_at, last_seen_at, created_at, updated_at
+            ) VALUES (?, 'quote_no_customer_response', ?, ?, ?, ?)
+            """,
+            ("q-unanswered", ts, ts, ts, ts),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT status FROM load WHERE quote_no = ?", ("q-unanswered",)
+        ).fetchone()
+        self.assertEqual(row["status"], "quote_no_customer_response")
+
     def test_migration_from_legacy_check(self) -> None:
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row

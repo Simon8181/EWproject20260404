@@ -22,7 +22,7 @@
 
 ## 非功能约束
 
-- API Key 由环境/`.env` 提供；禁止在仓库提交秘钥。环境加载行为见 `settings.load_env()` 与 `quote-ai-collect.md` 中「配置与环境变量」说明。
+- API Key 由环境/`.env` 提供；禁止在仓库提交秘钥。环境加载行为见 `settings.load_env()` 与 `config/.env.example`。
 - 长任务须可进度轮询；异常写入 `error_message`。
 
 ## 实现参考

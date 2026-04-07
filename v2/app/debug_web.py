@@ -30,12 +30,10 @@ from .validation_runner import (
     run_validation_job_thread,
     validation_start_lock,
 )
-from .quote_web import router as _quote_router
-
-app = FastAPI(title="EW v2 Debug", version="0.1.0")
-app.include_router(_quote_router)
-
+_DEBUG_BRAND = "EW v3 Debug Simon"
 TAB_KEYS = ("quote", "order", "complete", "cancel")
+
+app = FastAPI(title=_DEBUG_BRAND, version="0.1.0")
 
 _DEBUG_NO_CACHE_HEADERS = {
     "Cache-Control": "no-store, must-revalidate",
@@ -346,11 +344,11 @@ def _render_layout(title: str, body: str) -> HTMLResponse:
     nav = (
         '<nav class="gf-nav" aria-label="主导航">'
         '<a href="/debug">Home</a>'
-        '<a href="/quote" target="_blank" rel="noopener noreferrer">AI 收集报价数据</a>'
         '<a href="/debug/tab/quote">quote</a>'
         '<a href="/debug/tab/order">order</a>'
         '<a href="/debug/tab/complete">complete</a>'
         '<a href="/debug/tab/cancel">cancel</a>'
+        '<a href="/debug/blank">blank</a>'
         "</nav>"
     )
     page = f"""<!doctype html>
@@ -652,7 +650,7 @@ def _render_layout(title: str, body: str) -> HTMLResponse:
 <body class="gf-page">
   <header class="gf-header">
     <div class="gf-header__inner">
-      <span class="gf-header__brand">EW v2 Debug</span>
+      <span class="gf-header__brand">{html.escape(_DEBUG_BRAND)}</span>
       {nav}
     </div>
   </header>
@@ -675,6 +673,12 @@ def _feedback_block(msg: str | None, err: str | None) -> str:
     if err:
         return f'<div class="err">{html.escape(err)}</div>'
     return ""
+
+
+@app.get("/debug/blank", response_class=HTMLResponse)
+def debug_blank() -> HTMLResponse:
+    """Empty canvas: same header/nav and v2 styles; no body content."""
+    return _render_layout("Blank", "")
 
 
 @app.get("/debug", response_class=HTMLResponse)
@@ -708,12 +712,9 @@ def debug_home(msg: str | None = None, err: str | None = None) -> HTMLResponse:
       <form method="post" action="/debug/actions/clear-load">
         <button type="submit" class="gf-btn gf-btn-danger">清空数据（仅 load）</button>
       </form>
-      <div class="actions" style="margin:0;display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;">
-        <form method="post" action="/debug/actions/import" style="display:inline;">
-          <button type="submit" class="gf-btn gf-btn-primary">导入数据</button>
-        </form>
-        <a class="gf-btn gf-btn-ghost" href="/quote" target="_blank" rel="noopener noreferrer">AI 收集报价数据</a>
-      </div>
+      <form method="post" action="/debug/actions/import" style="display:inline;">
+        <button type="submit" class="gf-btn gf-btn-primary">导入数据</button>
+      </form>
     </div>
     """
     rows_html = "".join(
@@ -769,7 +770,7 @@ def debug_home(msg: str | None = None, err: str | None = None) -> HTMLResponse:
 </script>
 """
     body = _feedback_block(msg, err) + cards + forms + links + logs + status_refresh
-    return _render_layout("EW v2 Debug", body)
+    return _render_layout(_DEBUG_BRAND, body)
 
 
 @app.get("/debug/api/status")

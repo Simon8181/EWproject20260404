@@ -4,11 +4,26 @@ import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+
+
+# Sheet / import upsert: do not overwrite status if ops UI has touched these columns.
+LOAD_WEB_TOUCHED_SQL = """(
+  trim(coalesce(load.pickup_eta,'')) != ''
+  OR trim(coalesce(load.delivery_eta,'')) != ''
+  OR trim(coalesce(load.pickup_tz,'')) != ''
+  OR trim(coalesce(load.delivery_tz,'')) != ''
+  OR trim(coalesce(load.carrier_note,'')) != ''
+  OR coalesce(load.cargo_ready, 0) != 0
+  OR trim(coalesce(load.operator_updated_at,'')) != ''
+  OR trim(coalesce(load.operator_updated_by,'')) != ''
+)"""
 
 
 ALLOWED_STATUS = (
     "pending_quote",
     "quoted",
+    "quote_no_customer_response",
     "not_ready",
     "ordered",
     "carrier_assigned",
@@ -71,6 +86,7 @@ def _load_create_table_ddl(table_name: str) -> str:
           operator_updated_by TEXT NOT NULL DEFAULT '',
           operator_updated_at TEXT NOT NULL DEFAULT '',
           source_tabs TEXT NOT NULL DEFAULT '',
+          data_source TEXT NOT NULL DEFAULT '',
           first_seen_at TEXT NOT NULL,
           last_seen_at TEXT NOT NULL,
           created_at TEXT NOT NULL,
@@ -80,7 +96,13 @@ def _load_create_table_ddl(table_name: str) -> str:
 
 
 def _load_check_needs_rebuild(sql: str) -> bool:
-    for token in ("pending_quote", "quoted", "not_ready", "unloaded"):
+    for token in (
+        "pending_quote",
+        "quoted",
+        "quote_no_customer_response",
+        "not_ready",
+        "unloaded",
+    ):
         if token not in sql:
             return True
     return False
@@ -125,6 +147,90 @@ def _migrate_load_status_if_needed(conn: sqlite3.Connection) -> None:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def upsert_load_from_sheet_import(
+    conn: sqlite3.Connection,
+    *,
+    quote_no: str,
+    item: dict[str, Any],
+    source_tabs: str,
+    now: str,
+) -> None:
+    """Upsert one `load` row using the same rules as `sheet_import.run_one_time_import`."""
+    conn.execute(
+        f"""
+        INSERT INTO load (
+          quote_no, status, is_trouble_case,
+          customer_name, note_d_raw, note_e_raw, note_f_raw,
+          broker, actual_driver_rate_raw, carriers,
+          pieces_raw, commodity_desc,
+          ship_from_raw, consignee_contact, ship_to_raw,
+          weight_raw, dimension_raw,
+          volume_raw, cargo_value_raw, customer_quote_raw, driver_rate_raw,
+          source_tabs, data_source,
+          first_seen_at, last_seen_at, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(quote_no) DO UPDATE SET
+          status = CASE
+            WHEN {LOAD_WEB_TOUCHED_SQL} THEN load.status
+            ELSE excluded.status
+          END,
+          is_trouble_case = excluded.is_trouble_case,
+          customer_name = excluded.customer_name,
+          note_d_raw = excluded.note_d_raw,
+          note_e_raw = excluded.note_e_raw,
+          note_f_raw = excluded.note_f_raw,
+          broker = excluded.broker,
+          actual_driver_rate_raw = excluded.actual_driver_rate_raw,
+          carriers = excluded.carriers,
+          pieces_raw = excluded.pieces_raw,
+          commodity_desc = excluded.commodity_desc,
+          ship_from_raw = excluded.ship_from_raw,
+          consignee_contact = excluded.consignee_contact,
+          ship_to_raw = excluded.ship_to_raw,
+          weight_raw = excluded.weight_raw,
+          dimension_raw = excluded.dimension_raw,
+          volume_raw = excluded.volume_raw,
+          cargo_value_raw = excluded.cargo_value_raw,
+          customer_quote_raw = excluded.customer_quote_raw,
+          driver_rate_raw = excluded.driver_rate_raw,
+          source_tabs = excluded.source_tabs,
+          data_source = excluded.data_source,
+          last_seen_at = excluded.last_seen_at,
+          updated_at = excluded.updated_at
+        """,
+        (
+            quote_no,
+            item["status"],
+            1 if item.get("is_trouble_case") else 0,
+            item.get("customer_name", ""),
+            item.get("note_d_raw", ""),
+            item.get("note_e_raw", ""),
+            item.get("note_f_raw", ""),
+            item.get("broker", ""),
+            item.get("actual_driver_rate_raw", ""),
+            item.get("carriers", ""),
+            item.get("pieces_raw", ""),
+            item.get("commodity_desc", ""),
+            item.get("ship_from_raw", ""),
+            item.get("consignee_contact", ""),
+            item.get("ship_to_raw", ""),
+            item.get("weight_raw", ""),
+            item.get("dimension_raw", ""),
+            item.get("volume_raw", ""),
+            item.get("cargo_value_raw", ""),
+            item.get("customer_quote_raw", ""),
+            item.get("driver_rate_raw", ""),
+            source_tabs,
+            str(item.get("data_source") or "").strip(),
+            now,
+            now,
+            now,
+            now,
+        ),
+    )
 
 
 def open_db(path: Path) -> sqlite3.Connection:
@@ -183,6 +289,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
           operator_updated_by TEXT NOT NULL DEFAULT '',
           operator_updated_at TEXT NOT NULL DEFAULT '',
           source_tabs TEXT NOT NULL DEFAULT '',
+          data_source TEXT NOT NULL DEFAULT '',
           first_seen_at TEXT NOT NULL,
           last_seen_at TEXT NOT NULL,
           created_at TEXT NOT NULL,
@@ -287,6 +394,8 @@ def _ensure_load_columns(conn: sqlite3.Connection) -> None:
         "cargo_ready": "INTEGER NOT NULL DEFAULT 0 CHECK (cargo_ready IN (0,1))",
         "operator_updated_by": "TEXT NOT NULL DEFAULT ''",
         "operator_updated_at": "TEXT NOT NULL DEFAULT ''",
+        "data_source": "TEXT NOT NULL DEFAULT ''",
+        "v3_sheet_ai_enriched_at": "TEXT NOT NULL DEFAULT ''",
     }
     for col, ddl in wanted.items():
         if col in existing:
@@ -378,6 +487,175 @@ def clear_load_quote_only(conn: sqlite3.Connection) -> int:
     except sqlite3.OperationalError:
         pass
     return len(qns) if qns else int(cur.rowcount or 0)
+
+
+def clear_load_quote_for_data_source(
+    conn: sqlite3.Connection, *, data_source: str
+) -> int:
+    """
+    Remove load rows that include the quote tab **and** match ``data_source``.
+    Empty ``data_source`` keeps legacy behavior: delete all quote-tab rows (same as clear_load_quote_only).
+    """
+    ds = (data_source or "").strip()
+    if not ds:
+        return clear_load_quote_only(conn)
+    rows = conn.execute(
+        """
+        SELECT quote_no FROM load
+        WHERE instr(',' || COALESCE(TRIM(source_tabs), '') || ',', ',quote,') > 0
+          AND TRIM(COALESCE(data_source, '')) = ?
+        """,
+        (ds,),
+    ).fetchall()
+    qns = [str(r["quote_no"]) for r in rows]
+    for qn in qns:
+        conn.execute("DELETE FROM load_validation_log WHERE quote_no = ?", (qn,))
+    cur = conn.execute(
+        """
+        DELETE FROM load
+        WHERE instr(',' || COALESCE(TRIM(source_tabs), '') || ',', ',quote,') > 0
+          AND TRIM(COALESCE(data_source, '')) = ?
+        """,
+        (ds,),
+    )
+    conn.commit()
+    try:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except sqlite3.OperationalError:
+        pass
+    return len(qns) if qns else int(cur.rowcount or 0)
+
+
+def fetch_quote_nos_v3_sheet_ai_done(
+    conn: sqlite3.Connection,
+    quote_nos: list[str],
+    *,
+    data_source: str,
+) -> set[str]:
+    """
+    主键 quote_no 已在库中且 v3 Sheet 行 AI 已跑过（时间戳非空）的集合。
+    data_source 非空时同时匹配 load.data_source，避免跨来源同号误判。
+    """
+    if not quote_nos:
+        return set()
+    ds = (data_source or "").strip()
+    out: set[str] = set()
+    chunk_size = 400
+    for i in range(0, len(quote_nos), chunk_size):
+        chunk = [str(x).strip() for x in quote_nos[i : i + chunk_size] if str(x).strip()]
+        if not chunk:
+            continue
+        ph = ",".join("?" * len(chunk))
+        if ds:
+            sql = f"""
+                SELECT quote_no FROM load
+                WHERE quote_no IN ({ph})
+                  AND TRIM(COALESCE(v3_sheet_ai_enriched_at, '')) != ''
+                  AND TRIM(COALESCE(data_source, '')) = ?
+            """
+            params: list[Any] = list(chunk) + [ds]
+        else:
+            sql = f"""
+                SELECT quote_no FROM load
+                WHERE quote_no IN ({ph})
+                  AND TRIM(COALESCE(v3_sheet_ai_enriched_at, '')) != ''
+            """
+            params = list(chunk)
+        for r in conn.execute(sql, params).fetchall():
+            out.add(str(r["quote_no"]).strip())
+    return out
+
+
+def patch_load_v3_sheet_ai_columns(
+    conn: sqlite3.Connection,
+    quote_no: str,
+    patch: dict[str, Any],
+    *,
+    now: str,
+) -> None:
+    """将 v3 Sheet 行 AI 输出的列写回 load，并刷新 v3_sheet_ai_enriched_at。"""
+    qn = str(quote_no or "").strip()
+    if not qn:
+        return
+    col_names = {
+        str(r["name"])
+        for r in conn.execute("PRAGMA table_info(load)").fetchall()
+    }
+    skip = frozenset(
+        {
+            "quote_no",
+            "first_seen_at",
+            "created_at",
+        }
+    )
+    sets: list[str] = []
+    vals: list[Any] = []
+    for k, v in patch.items():
+        sk = str(k).strip()
+        if not sk or sk in skip or sk not in col_names:
+            continue
+        sets.append(f'"{sk}" = ?')
+        vals.append(v)
+    sets.append('"v3_sheet_ai_enriched_at" = ?')
+    vals.append(now)
+    vals.append(qn)
+    conn.execute(f'UPDATE load SET {", ".join(sets)} WHERE quote_no = ?', vals)
+
+
+def fetch_load_allowlist_snapshot_for_quote_nos(
+    conn: sqlite3.Connection,
+    quote_nos: list[str],
+    column_names: frozenset[str],
+    *,
+    data_source: str,
+) -> dict[str, dict[str, Any]]:
+    """
+    返回 quote_no -> 列子集，供跳过 Gemini 时把库内已有 AI 可写字段合并进内存 load（与 data_source 对齐）。
+    """
+    if not quote_nos or not column_names:
+        return {}
+    table_cols = {
+        str(r["name"])
+        for r in conn.execute("PRAGMA table_info(load)").fetchall()
+    }
+    cols = [c for c in sorted(column_names) if c in table_cols]
+    if not cols:
+        return {}
+    ds = (data_source or "").strip()
+    out: dict[str, dict[str, Any]] = {}
+    chunk_size = 400
+    col_sql = ", ".join(f'"{c}"' for c in cols)
+    for i in range(0, len(quote_nos), chunk_size):
+        chunk = [str(x).strip() for x in quote_nos[i : i + chunk_size] if str(x).strip()]
+        if not chunk:
+            continue
+        ph = ",".join("?" * len(chunk))
+        if ds:
+            sql = f"""
+                SELECT quote_no, {col_sql} FROM load
+                WHERE quote_no IN ({ph})
+                  AND TRIM(COALESCE(data_source, '')) = ?
+            """
+            params: list[Any] = list(chunk) + [ds]
+        else:
+            sql = f"""
+                SELECT quote_no, {col_sql} FROM load
+                WHERE quote_no IN ({ph})
+            """
+            params = list(chunk)
+        for row in conn.execute(sql, params).fetchall():
+            qn = str(row["quote_no"]).strip()
+            patch: dict[str, Any] = {}
+            for c in cols:
+                v = row[c]
+                if v is None:
+                    continue
+                if isinstance(v, str) and not str(v).strip():
+                    continue
+                patch[c] = v
+            if patch:
+                out[qn] = patch
+    return out
 
 
 def has_running_validation_job(conn: sqlite3.Connection) -> bool:

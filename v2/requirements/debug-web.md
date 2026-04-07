@@ -15,7 +15,6 @@
 
 1. **导航**：
    - Debug 首页链到 `quote` / `order` / `complete` / `cancel` 四个 tab 页路径与 `text1` 流程一致。
-   - 「**AI 收集报价数据**」链到 `GET /quote`（见 `quote-ai-collect.md`），**新标签**打开，当前 Debug 页保留。
 2. **总览**：展示 load 行数、导入锁开关、环境名、最近导入日志列表；可选轮询 `GET /debug/api/status` 刷新数字。
 3. **清空 load**：`POST /debug/actions/clear-load` 清空 `load` 并解除导入锁（逻辑以 `db.clear_load_only` 为准）。
 4. **导入**：`POST /debug/actions/import` 调用 `run_one_time_import`（遵守锁与 prod 约束）。

@@ -8,7 +8,14 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
 from .address_ai import gemini_api_key
-from .db import ALLOWED_STATUS, ensure_schema, is_import_done, now_iso, set_import_done
+from .db import (
+    ALLOWED_STATUS,
+    ensure_schema,
+    is_import_done,
+    now_iso,
+    set_import_done,
+    upsert_load_from_sheet_import,
+)
 from .mapping import DEFAULT_AI_IMPORT_ALLOWLIST, LoadMapping, TabConfig
 from .note_def_extract import parse_def_notes
 from .sheet_colors import fetch_column_a_color_labels
@@ -19,6 +26,7 @@ _SCOPES = ("https://www.googleapis.com/auth/spreadsheets.readonly",)
 
 STATUS_PRIORITY = {
     "pending_quote": 1,
+    "quote_no_customer_response": 2,
     "quoted": 2,
     "not_ready": 3,
     "ordered": 4,
@@ -29,17 +37,6 @@ STATUS_PRIORITY = {
     "complete": 9,
     "cancel": 10,
 }
-
-_LOAD_WEB_TOUCHED_SQL = """(
-  trim(coalesce(load.pickup_eta,'')) != ''
-  OR trim(coalesce(load.delivery_eta,'')) != ''
-  OR trim(coalesce(load.pickup_tz,'')) != ''
-  OR trim(coalesce(load.delivery_tz,'')) != ''
-  OR trim(coalesce(load.carrier_note,'')) != ''
-  OR coalesce(load.cargo_ready, 0) != 0
-  OR trim(coalesce(load.operator_updated_at,'')) != ''
-  OR trim(coalesce(load.operator_updated_by,'')) != ''
-)"""
 
 
 @dataclass
@@ -365,76 +362,12 @@ def run_one_time_import(
         for quote_no, item in aggregate.items():
             item.pop("_import_ai_contexts", None)
             source_tabs = ",".join(sorted(item["source_tabs"]))
-            conn.execute(
-                f"""
-                INSERT INTO load (
-                  quote_no, status, is_trouble_case,
-                  customer_name, note_d_raw, note_e_raw, note_f_raw,
-                  broker, actual_driver_rate_raw, carriers,
-                  pieces_raw, commodity_desc,
-                  ship_from_raw, consignee_contact, ship_to_raw,
-                  weight_raw, dimension_raw,
-                  volume_raw, cargo_value_raw, customer_quote_raw, driver_rate_raw,
-                  source_tabs,
-                  first_seen_at, last_seen_at, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(quote_no) DO UPDATE SET
-                  status = CASE
-                    WHEN {_LOAD_WEB_TOUCHED_SQL} THEN load.status
-                    ELSE excluded.status
-                  END,
-                  is_trouble_case = excluded.is_trouble_case,
-                  customer_name = excluded.customer_name,
-                  note_d_raw = excluded.note_d_raw,
-                  note_e_raw = excluded.note_e_raw,
-                  note_f_raw = excluded.note_f_raw,
-                  broker = excluded.broker,
-                  actual_driver_rate_raw = excluded.actual_driver_rate_raw,
-                  carriers = excluded.carriers,
-                  pieces_raw = excluded.pieces_raw,
-                  commodity_desc = excluded.commodity_desc,
-                  ship_from_raw = excluded.ship_from_raw,
-                  consignee_contact = excluded.consignee_contact,
-                  ship_to_raw = excluded.ship_to_raw,
-                  weight_raw = excluded.weight_raw,
-                  dimension_raw = excluded.dimension_raw,
-                  volume_raw = excluded.volume_raw,
-                  cargo_value_raw = excluded.cargo_value_raw,
-                  customer_quote_raw = excluded.customer_quote_raw,
-                  driver_rate_raw = excluded.driver_rate_raw,
-                  source_tabs = excluded.source_tabs,
-                  last_seen_at = excluded.last_seen_at,
-                  updated_at = excluded.updated_at
-                """,
-                (
-                    quote_no,
-                    item["status"],
-                    1 if item["is_trouble_case"] else 0,
-                    item.get("customer_name", ""),
-                    item.get("note_d_raw", ""),
-                    item.get("note_e_raw", ""),
-                    item.get("note_f_raw", ""),
-                    item.get("broker", ""),
-                    item.get("actual_driver_rate_raw", ""),
-                    item.get("carriers", ""),
-                    item.get("pieces_raw", ""),
-                    item.get("commodity_desc", ""),
-                    item.get("ship_from_raw", ""),
-                    item.get("consignee_contact", ""),
-                    item.get("ship_to_raw", ""),
-                    item.get("weight_raw", ""),
-                    item.get("dimension_raw", ""),
-                    item.get("volume_raw", ""),
-                    item.get("cargo_value_raw", ""),
-                    item.get("customer_quote_raw", ""),
-                    item.get("driver_rate_raw", ""),
-                    source_tabs,
-                    now,
-                    now,
-                    now,
-                    now,
-                ),
+            upsert_load_from_sheet_import(
+                conn,
+                quote_no=quote_no,
+                item=item,
+                source_tabs=source_tabs,
+                now=now,
             )
             stats.rows_written += 1
         conn.execute(
