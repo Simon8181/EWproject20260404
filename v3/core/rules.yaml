@@ -1,0 +1,5 @@
+# 应用代码不读取本文件。
+# AI / Agent / 开发者请先读：
+#   - core/ai_sheet_rules.yaml — 变更行→AI→load 必要字段 + 模型配置
+#   - core/README.md
+version: 3

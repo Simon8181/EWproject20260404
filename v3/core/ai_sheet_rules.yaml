@@ -1,0 +1,223 @@
+# v3：Sheet 变更行 → AI 解析为表结构数据。不读 core/rules.yaml。
+# 表头：每次从 Sheet **现读第一行**（不写入本文件、不写死行号）；再用 categories.header_hints 对齐列义。
+
+sheet:
+  spreadsheet_id: "https://docs.google.com/spreadsheets/d/1cuPIPfP7WYpBI33UVovFAI7wzH8lAOp3PqGOp8idZfU/edit?gid=589486198#gid=589486198"
+  # 本条 Sheet 链路写入 load.data_source；v3「刷新并入库」仅删除 source_tabs 含 quote 且 data_source 与此相同的行（空字符串则沿用旧逻辑：删全部 quote 来源行）
+  data_source: sam_sheet
+  tabs:
+    - key: quote
+      worksheet: "报价 quote"
+      # 可选：仅本表数据起始行（1-based），覆盖 sheet.first_data_row_1based
+      # first_data_row_1based: 2
+    - key: order
+      worksheet: "下单 BOL need booking"
+    - key: complete
+      worksheet: "POD 收钱"
+    - key: cancel
+      worksheet: "取消订单/Cancellations"
+  watch_column_letters: [P, U]
+  # 仅 quote tab：先找 B 列「最后一条非空」所在数据行，再保留从第 1 行数据到该行这一段的末尾 N%（向上取整，至少 1 行）。0 表示关闭。
+  # 四表合并行级校验（见 API merge.stats / merge.validation）：B 空、C 无 EW、非列表行、较前阶段已出现、同表重复 EW 均跳过并分别计数。
+  quote_b_column_tail_percent: 10
+  # 数据区首行在工作表中的 1-based 行号（须与下方拉取范围一致；默认 2 = 表头下一行）。行号展示与 v3 刷新均用此值。
+  first_data_row_1based: 2
+  # quote 表：A 列若可解析为日期，且早于「今天」超过 N 天（本地日历，严格大于 N），合并写入前 status 强制为 cancel；0 关闭。
+  quote_column_a_stale_cancel_days: 7
+  # quote：按工作表网格 rowCount 连续拉取；单批内若区间尾部全空，Sheets API 会少返回行，程序会补空行并对齐下一批起始行（否则易在约 6k+ 行附近少读）。达到下列上限或表底则停（仅 quote；其它 tab 仍单批）。
+  quote_extend_fetch_for_b_tail: true
+  quote_extend_fetch_max_total_rows: 12000
+
+table_load:
+  description: >
+    每次调用前由程序从当前工作表 **重新读取第一行** 作为表头（不在此 YAML 配置行号）。
+    有变化的行：把该行各格原文与「本次读到的表头」一并交给模型。
+    按 categories 的 header_hints 理解列义，输出单个 JSON，键名 = field.name；
+    不确定不编造，可省略键或空字符串。
+
+  # 按表头语义分类（quote 等 tab 共用同一套列义时可直接用；若某 tab 表头不同可日后按 tab 覆写）
+  categories:
+    - id: customer_and_quote_no
+      category_zh: 客户与单号
+      header_hints:
+        - 客户
+        - customer
+        - B
+        - 单号
+        - quote
+        - Quote
+        - C
+      fields:
+        - name: quote_no
+          required: true
+          desc_zh: 主键单号（对齐表头「单号」类列）
+        - name: customer_name
+          required: false
+          desc_zh: 客户名称（对齐表头「客户」类列）
+
+    - id: notes_def
+      category_zh: 备注三格与派生
+      header_hints:
+        - 备注
+        - note
+        - D
+        - E
+        - F
+        - Broker
+        - 经纪
+      fields:
+        - name: note_d_raw
+          required: false
+          desc_zh: 与表头 D 列同义格的原文
+        - name: note_e_raw
+          required: false
+          desc_zh: 与表头 E 列同义格的原文
+        - name: note_f_raw
+          required: false
+          desc_zh: 与表头 F 列同义格的原文
+        - name: broker
+          required: false
+          desc_zh: 从备注中识别的经纪/Broker（无则空）
+        - name: actual_driver_rate_raw
+          required: false
+          desc_zh: 从备注中识别的实际给司机价
+        - name: carriers
+          required: false
+          desc_zh: MC/DOT/3PL 等承运标识
+
+    - id: cargo
+      category_zh: 件数与货描
+      header_hints:
+        - 件数
+        - pieces
+        - G
+        - 货描
+        - commodity
+        - H
+      fields:
+        - name: pieces_raw
+          required: false
+          desc_zh: 件数
+        - name: commodity_desc
+          required: false
+          desc_zh: 货物描述
+
+    - id: lanes_contact
+      category_zh: 提货地、收货联系、送货地
+      header_hints:
+        - 提货
+        - 起始
+        - ship from
+        - I
+        - 收货
+        - 联系人
+        - consignee
+        - J
+        - 送货
+        - 目的
+        - ship to
+        - K
+      fields:
+        - name: ship_from_raw
+          required: false
+          desc_zh: 起始地/提货地原文
+        - name: consignee_contact
+          required: false
+          desc_zh: 收货方联系人/电话等
+        - name: ship_to_raw
+          required: false
+          desc_zh: 目的地/送货地原文
+
+    - id: weight_dim_value
+      category_zh: 重量、尺寸、体积、货值
+      header_hints:
+        - 重量
+        - weight
+        - L
+        - 尺寸
+        - dimension
+        - M
+        - 体积
+        - volume
+        - N
+        - 货值
+        - value
+        - O
+      fields:
+        - name: weight_raw
+          required: false
+          desc_zh: 重量
+        - name: dimension_raw
+          required: false
+          desc_zh: 尺寸
+        - name: volume_raw
+          required: false
+          desc_zh: 体积
+        - name: cargo_value_raw
+          required: false
+          desc_zh: 货值
+
+    - id: pricing
+      category_zh: 客户报价与司机价
+      header_hints:
+        - 报价
+        - quote price
+        - P
+        - 司机
+        - driver
+        - U
+      fields:
+        - name: customer_quote_raw
+          required: false
+          desc_zh: 客户报价（对齐表头「报价」类列）
+        - name: driver_rate_raw
+          required: false
+          desc_zh: 司机价（对齐表头「司机」类列）
+
+  forbidden_output:
+    - status
+    - source_tabs
+    - is_trouble_case
+    - pickup_eta
+    - delivery_eta
+    - pickup_tz
+    - delivery_tz
+    - carrier_note
+    - cargo_ready
+    - operator_updated_at
+    - operator_updated_by
+    - validate_ok
+    - validate_error
+    - validated_at
+    - distance_miles
+    - origin_normalized
+    - dest_normalized
+    - used_ai_retry
+    - ai_confidence
+    - ai_notes
+    - origin_land_use
+    - dest_land_use
+    - shipper_info
+    - consignee_info
+    - first_seen_at
+    - last_seen_at
+    - created_at
+    - updated_at
+
+ai:
+  provider: google_gemini
+  model: gemini-2.5-flash
+  api: generativelanguage_v1beta
+  env_key: GEMINI_API_KEY
+  generation:
+    temperature: 0.1
+    response_mime_type: application/json
+  instructions: |
+    你是物流表格解析助手。输入必须包含：**本次从 Sheet 读取的第一行表头**（非缓存、非本文件配置）与「有变更」的数据行各格。
+    用 table_load.categories 里的 header_hints 将「当前表头文字」与列、再映射到 load 字段；只输出各 category.fields 里出现的 name 作为 JSON 键。
+    禁止输出 forbidden_output 中的键。不得编造单号、地址、金额；不确定则省略该键。
+
+  refresh_context:
+    max_changed_rows_per_call: 50
+    # 四表合并后先算总行数，再按批并发请求 Gemini（每批至多 max_changed_rows_per_call 行）
+    parallel_batch_workers: 4

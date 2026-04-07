@@ -1,0 +1,7 @@
+certifi>=2024.0
+fastapi>=0.100
+python-dotenv>=1.0
+uvicorn[standard]>=0.22
+pyyaml>=6
+google-api-python-client>=2.100
+google-auth>=2.23
