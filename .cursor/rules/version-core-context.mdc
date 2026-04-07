@@ -1,0 +1,27 @@
+---
+description: 各版本 vN/core 必读 ai_sheet_rules.yaml（v3/v4/…）
+alwaysApply: true
+---
+
+# `v1/`、`v2/` 不编辑
+
+`v1/`、`v2/` **仅供查阅**，请勿修改其中的代码、配置或文档；新工作在 **`v3/` 及以后** 进行。
+
+---
+
+# 大版本目录与 `core` 必读
+
+本仓库按**大版本**用顶层目录组织，例如 `v3/`、`v4/`、`v5/` …（数字随迭代增加）。
+
+在**修改或实现**任一 `vN/` 下代码、配置或文档前，若该目录下存在 `vN/core/`，必须先使用工具读取（不要仅凭记忆）：
+
+1. `vN/core/README.md` — `core` 职责与配置入口说明  
+2. `vN/core/ai_sheet_rules.yaml` — Sheet 变更行→AI 解析→`load` **必要表字段**、`forbidden_output`、模型配置（**无列字母映射**）  
+
+`vN/core/rules.yaml` **不被应用加载**，仅可作目录注释。
+
+**范围**：只读与你当前任务相关的 `vN`；若任务跨多个版本，分别读取各自 `core`。
+
+若实现与上述 YAML 冲突，**以对应版本的 `ai_sheet_rules.yaml` 与 `README.md` 为准**。
+
+**新开版本（如 v4、v5）**：从上一版复制并迭代 `vN/core/`（含 `ai_sheet_rules.yaml` 等）及本仓库根目录 [`AGENTS.md`](AGENTS.md) 中的版本说明。
